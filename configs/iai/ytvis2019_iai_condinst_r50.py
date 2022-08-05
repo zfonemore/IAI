@@ -78,7 +78,7 @@ model = dict(
         max_per_img=10))
 # dataset settings
 dataset_type = 'YTVOSDataset'
-data_root = 'data/'
+data_root = 'data/ytvis2019/'
 img_norm_cfg = dict(
     mean=[123.68, 116.779, 103.939], std=[58.393, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
@@ -148,7 +148,7 @@ evaluation = dict(interval=1, metric=['bbox','segm'])
 device_ids = range(8)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './iai_condinst_r50/'
+work_dir = './ytvis2019_iai_condinst_r50/'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]

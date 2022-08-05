@@ -1,13 +1,13 @@
 # model settings
-batch_size = 2
+batch_size = 4
 max_obj_num = 20
 model = dict(
     type='IAICondInst',
-    pretrained='torchvision://resnet101',
+    pretrained='torchvision://resnet50',
     id_cfg=dict(num_frames=5, batch_size=batch_size, max_obj_num=max_obj_num),
     backbone=dict(
         type='ResNet',
-        depth=101,
+        depth=50,
         num_stages=4,
         out_indices=(0, 1, 2, 3),
         frozen_stages=1,
@@ -31,7 +31,7 @@ model = dict(
         feat_channels=256,
         self_heads=4,
         attn_heads=2,
-        global_mem_interval=3),
+        global_mem_interval=5),
     bbox_head=dict(
         type='IAICondInstHead',
         num_classes=40,
@@ -70,7 +70,7 @@ model = dict(
         pos_weight=-1,
         debug=False),
     test_cfg = dict(
-        nms_pre=1000,
+        nms_pre=200,
         min_bbox_size=0,
         id_score_thr=0.1,
         cls_score_thr=0.1,
@@ -78,18 +78,18 @@ model = dict(
         max_per_img=10))
 # dataset settings
 dataset_type = 'YTVOSDataset'
-data_root = 'data/ytvis2019/'
+data_root = 'data/ovis/'
 img_norm_cfg = dict(
     mean=[123.68, 116.779, 103.939], std=[58.393, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations', with_bbox=True, with_mask=True, with_id=True),
-    dict(type='Resize', img_scale=[(649, 360), (960, 480)], keep_ratio=True),
+    dict(type='Resize', img_scale=(640, 360), keep_ratio=True),
     dict(type='RandomFlip', flip_ratio=0.5),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
     dict(type='DefaultFormatBundle'),
-    dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks', 'gt_ids', 'scale']),
+    dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks', 'gt_ids']),
 ]
 test_pipeline = [
     dict(type='LoadImageFromFile'),
@@ -148,7 +148,7 @@ evaluation = dict(interval=1, metric=['bbox','segm'])
 device_ids = range(8)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './ytvis2019_iai_condinst_r101/'
+work_dir = './ovis_iai_condinst_r50/'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]
