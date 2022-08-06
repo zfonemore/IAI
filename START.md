@@ -6,8 +6,8 @@ Train on YouTube-VIS 2019, evaluate on YouTube-VIS 2019.
 
 | Name      | pretrain | AP   | AP50 | AP75 | AR1  | AR10 | model |
 | --------- | -------- | ---- | ---- | ---- | ---- | ------------------------------------------------------------ |
-| [R50]()   | [COCO](https://drive.google.com/file/d/15w9jpvK8I5GrHYKWI8VOnmkc_gBU7aa2/view?usp=sharing)     |3.5 | 74.0 | 52.9 | 47.7 | 58.7 | [gdrive](https://drive.google.com/file/d/1v6DJKjoiBvwO0jAR3fNTLfnpAP4ZaEh8/view?usp=sharing) |
-| [R101]()  | 41.1 | 73.1 | 56.1 | 47.0 | 57.9 | [model](https://drive.google.com/file/d/18tKT_b37CPaZL6AMaA5_sfOSzTnNxzsk/view?usp=sharing) |
+| [R50]()   | [COCO](https://drive.google.com/file/d/15w9jpvK8I5GrHYKWI8VOnmkc_gBU7aa2/view?usp=sharing)     | 3.5 | 74.0 | 52.9 | 47.7 | 58.7 | [gdrive](https://drive.google.com/file/d/1v6DJKjoiBvwO0jAR3fNTLfnpAP4ZaEh8/view?usp=sharing) |
+| [R101]()  | [COCO](https://drive.google.com/file/d/1Tfg__rlo9VlMQWtIHPqvHzFwASPVb3U-/view?usp=sharing)     | 41.1 | 73.1 | 56.1 | 47.0 | 57.9 | [model](https://drive.google.com/file/d/18tKT_b37CPaZL6AMaA5_sfOSzTnNxzsk/view?usp=sharing) |
 
 
 ### Training
