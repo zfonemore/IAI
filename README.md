@@ -21,7 +21,7 @@ Please refer to [Getting Started with IAI](./START.md).
 ```
 @inproceedings{seqformer,
   title={Instance As Identity: A Generic Online Paradigm for Video Instance Segmentation},
-  author={Zhu, Feng and Yang, Zongxin and Yu, Xin and Yi, Yang and Wei, Yunchao},
+  author={Zhu, Feng and Yang, Zongxin and Yu, Xin and Yang, Yi and Wei, Yunchao},
   booktitle={ECCV},
   year={2022},
 }
