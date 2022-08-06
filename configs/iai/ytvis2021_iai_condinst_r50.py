@@ -1,6 +1,6 @@
 # model settings
 batch_size = 4
-max_obj_num = 20
+max_obj_num = 25
 model = dict(
     type='IAICondInst',
     pretrained='torchvision://resnet50',
@@ -111,7 +111,7 @@ data = dict(
     workers_per_gpu=2,
     train=dict(
         type=dataset_type,
-        ann_file=data_root + 'annotations/instances_train_sub.json',
+        ann_file=data_root + 'train/instances.json',
         img_prefix=data_root + 'train/JPEGImages',
         pipeline=train_pipeline,
         with_mask=True,
