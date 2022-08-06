@@ -19,7 +19,7 @@ Please refer to [Getting Started with IAI](./START.md).
 ## Citation
 
 ```
-@inproceedings{seqformer,
+@inproceedings{iai,
   title={Instance As Identity: A Generic Online Paradigm for Video Instance Segmentation},
   author={Zhu, Feng and Yang, Zongxin and Yu, Xin and Yang, Yi and Wei, Yunchao},
   booktitle={ECCV},
