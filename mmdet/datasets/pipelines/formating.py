@@ -213,6 +213,8 @@ class DefaultFormatBundle(object):
             results[key] = DC(to_tensor(results[key]))
         if 'gt_masks' in results:
             results['gt_masks'] = DC(results['gt_masks'], cpu_only=True)
+        if 'gt_ids' in results:
+            results['gt_ids'] = DC(to_tensor(results['gt_ids']))
         if 'gt_semantic_seg' in results:
             results['gt_semantic_seg'] = DC(
                 to_tensor(results['gt_semantic_seg'][None, ...]), stack=True)

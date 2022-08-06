@@ -3,12 +3,70 @@ import os.path as osp
 import random
 import mmcv
 from .custom import CustomDataset
+'''
+from .transforms import (ImageTransform, BboxTransform, MaskTransform,
+                         Numpy2Tensor)
+'''
 import torch
 from pycocotools.ytvos import YTVOS
 from mmcv.parallel import DataContainer as DC
 from .builder import DATASETS
 from collections import Sequence
 from .pipelines import Compose
+
+
+def to_tensor(data):
+    """Convert objects of various python types to :obj:`torch.Tensor`.
+
+    Supported types are: :class:`numpy.ndarray`, :class:`torch.Tensor`,
+    :class:`Sequence`, :class:`int` and :class:`float`.
+    """
+    if isinstance(data, torch.Tensor):
+        return data
+    elif isinstance(data, np.ndarray):
+        return torch.from_numpy(data)
+    elif isinstance(data, Sequence) and not mmcv.is_str(data):
+        return torch.tensor(data)
+    elif isinstance(data, int):
+        return torch.LongTensor([data])
+    elif isinstance(data, float):
+        return torch.FloatTensor([data])
+    else:
+        raise TypeError('type {} cannot be converted to tensor.'.format(
+            type(data)))
+
+def random_scale(img_scales, mode='range'):
+    """Randomly select a scale from a list of scales or scale ranges.
+
+    Args:
+        img_scales (list[tuple]): Image scale or scale range.
+        mode (str): "range" or "value".
+
+    Returns:
+        tuple: Sampled image scale.
+    """
+    num_scales = len(img_scales)
+    if num_scales == 1:  # fixed scale is specified
+        img_scale = img_scales[0]
+    elif num_scales == 2:  # randomly sample a scale
+        if mode == 'range':
+            img_scale_long = [max(s) for s in img_scales]
+            img_scale_short = [min(s) for s in img_scales]
+            long_edge = np.random.randint(
+                min(img_scale_long),
+                max(img_scale_long) + 1)
+            short_edge = np.random.randint(
+                min(img_scale_short),
+                max(img_scale_short) + 1)
+            img_scale = (long_edge, short_edge)
+        elif mode == 'value':
+            img_scale = img_scales[np.random.randint(num_scales)]
+    else:
+        if mode != 'value':
+            raise ValueError(
+                'Only "value" mode supports more than 2 image scales')
+        img_scale = img_scales[np.random.randint(num_scales)]
+    return img_scale
 
 
 @DATASETS.register_module()
@@ -19,6 +77,15 @@ class YTVOSDataset(CustomDataset):
         'fox','deer','owl','surfboard','airplane','truck','zebra','tiger',
         'elephant','snowboard','boat','shark','mouse','frog','eagle','earless_seal',
         'tennis_racket')
+    #CLASSES=('airplane', 'bear', 'bird', 'boat', 'car', 'cat', 'cow',
+    #         'deer', 'dog', 'duck', 'earless_seal', 'elephant', 'fish',
+    #         'flying_disc', 'fox', 'frog', 'giant_panda', 'giraffe',
+    #         'horse', 'leopard', 'lizard', "monkey", "motorbike", "mouse",
+    #         "parrot", "person", "rabbit", "shark", "skateboard", "snake",
+    #         "snowboard", "squirrel", "surfboard", "tennis_racket", "tiger",
+    #         "train", "truck", "turtle", "whale", "zebra"
+    #         )
+
 
     def __init__(self,
                  ann_file,
@@ -35,19 +102,33 @@ class YTVOSDataset(CustomDataset):
                  resize_keep_ratio=True,
                  test_mode=False,
                  pipeline=None,
-                 cls_mode=False):
+                 ori_ids=False):
         # prefix of images path
         self.img_prefix = img_prefix
         #self.seg_prefix = img_prefix[:-10] + 'Annotations'
         self.seg_prefix = seg_prefix #img_prefix[:-10] + 'Annotations'
-        self.cls_mode = cls_mode
 
         # load annotations (and proposals)
         self.vid_infos = self.load_annotations(ann_file)
         img_ids = []
+        import random
+        #sample_rate = 0.2
+        sample_num = 6
+        import numpy as np
         for idx, vid_info in enumerate(self.vid_infos):
-          for frame_id in range(len(vid_info['filenames'])):
-            img_ids.append((idx, frame_id))
+          sample = False
+          #for frame_id in range(len(vid_info['filenames'])):
+          if test_mode:
+              for frame_id in range(len(vid_info['filenames'])):
+                img_ids.append((idx, frame_id))
+          else:
+              for frame_id in np.linspace(0, len(vid_info['filenames'])-1, sample_num, dtype=int):
+                img_ids.append((idx, frame_id))
+                #if test_mode:
+                #    img_ids.append((idx, frame_id))
+                #elif random.random() <= sample_rate:
+                #    img_ids.append((idx, frame_id))
+
         self.img_ids = img_ids
         self.proposal_file = proposal_file
         if proposal_file is not None:
@@ -95,15 +176,79 @@ class YTVOSDataset(CustomDataset):
 
         # num_frames in a video
         self.num_frames = 5
+        self.ori_ids = False#ori_ids
+
 
     def __len__(self):
-        return len(self.img_ids)
 
+        if self.test_mode:
+            return len(self.img_ids)
+        else:
+            return len(self.vid_infos) * 5#7
+
+    '''
     def __getitem__(self, idx):
         if self.test_mode:
             return self.prepare_test_img(self.img_ids[idx])
         data = self.prepare_train_img(self.img_ids[idx])
         return data
+    '''
+
+    def __getitem__(self, idx):
+        if not self.test_mode:
+            idx = idx
+        '''
+        if self.cls_mode:
+            data, obj_ids, obj_nums = self.prepare_train_img(self.img_ids[idx])
+
+            return data
+        '''
+
+        if self.test_mode:
+            return self.prepare_test_img(self.img_ids[idx])
+
+        idx = idx % len(self.vid_infos)
+        vid_info = self.vid_infos[idx]
+        vid_len = len(self.vid_ids[idx])
+        vid_frame_ids = self.vid_ids[idx]
+        if self.num_frames > vid_len:
+            new_vid_frame_ids = [i for i in vid_frame_ids]
+            for i in range(vid_len, self.num_frames):
+                new_vid_frame_ids.append(vid_frame_ids[i % vid_len])
+
+            vid_len = self.num_frames
+            vid_frame_ids = new_vid_frame_ids
+        curr_frame_id = random.randint(0, vid_len - self.num_frames)
+        frame_ids = [vid_frame_ids[curr_frame_id]]
+        for i in range(self.num_frames-1, 0, -1):
+            interval = random.randint(1,min(3, vid_len - curr_frame_id - i))
+            curr_frame_id += interval
+            frame_ids.append(vid_frame_ids[curr_frame_id])
+            #frame_ids.append(vid_frame_ids[random.randint(0, vid_len-1)])
+
+        data_list = []
+        obj_ids_list = []
+        scale = None
+        for frame_id in frame_ids:
+            data = None
+            while data is None:
+                data, obj_ids, obj_nums = self.prepare_train_img((idx, frame_id), scale)
+            if 'scale' in data.keys():
+                scale = data['scale']
+                data.pop('scale')
+
+            obj_ids_list += obj_ids
+            data_list.append(data)
+
+        obj_ids_list = np.unique(np.array(obj_ids_list))
+        #random_idx = random.sample(range(20), len(obj_ids_list))
+        #map = {x: random_idx[i] for i, x in enumerate(obj_ids_list)}
+        #if not self.ori_ids:
+        map = {x: i for i, x in enumerate(obj_ids_list)}
+        for data in data_list:
+            data['gt_ids']._data.apply_(lambda x:map[x])
+
+        return data_list
 
     def load_annotations(self, ann_file):
         self.ytvos = YTVOS(ann_file)
@@ -181,8 +326,19 @@ class YTVOSDataset(CustomDataset):
         # prepare a pair of image in a sequence
         vid,  frame_id = idx
         vid_info = self.vid_infos[vid]
+        # load image
+        #img = mmcv.imread(osp.join(self.img_prefix, vid_info['filenames'][frame_id]))
+        #basename = osp.basename(vid_info['filenames'][frame_id])
 
+        # load reference image
+        #_, ref_frame_id = self.sample_ref(idx)
+        #ref_img = mmcv.imread(osp.join(self.img_prefix, vid_info['filenames'][ref_frame_id]))
+        # obj ids attribute does not exist in current annotation
+        # need to add it
         ann = self.get_ann_info(vid, frame_id)
+        ann['seg_map'] = vid_info['filenames'][frame_id].replace('jpg', 'png')
+        obj_ids = ann['obj_ids']
+        obj_nums = len(obj_ids)
 
         vid_info['filename'] = vid_info['filenames'][frame_id]
         vid_info['file_name'] = vid_info['filenames'][frame_id]
@@ -194,12 +350,40 @@ class YTVOSDataset(CustomDataset):
             results['scale'] = scale
         results_processed = self.pipeline(results)
 
-        return results_processed
+        return results_processed, obj_ids, obj_nums
+        '''
+        vid_info['filename'] = vid_info['filenames'][ref_frame_id]
+        vid_info['file_name'] = vid_info['filenames'][ref_frame_id]
+
+        ref_ann = self.get_ann_info(vid, ref_frame_id)
+        ref_results = dict(img_info=vid_info, ann_info=ref_ann)
+
+        self.pre_pipeline(ref_results)
+        ref_results_processed = self.pipeline(ref_results)
+
+        gt_ids = ann['obj_ids']
+        ref_ids = ref_ann['obj_ids']
+        gt_pids = [ref_ids.index(i)+1 if i in ref_ids else 0 for i in gt_ids]
+
+        results_combine = results_processed
+        results_combine['ref_img'] = ref_results_processed['img']
+        results_combine['ref_labels'] = ref_results_processed['gt_labels']
+        results_combine['ref_bboxes'] = ref_results_processed['gt_bboxes']
+        results_combine['ref_masks'] = ref_results_processed['gt_masks']
+
+        if self.with_track:
+            results_combine['gt_pids'] = DC(to_tensor(gt_pids))
+
+        return results_combine
+        '''
 
     def prepare_test_img(self, idx):
         """Prepare an image for testing (multi-scale and flipping)"""
         vid,  frame_id = idx
         vid_info = self.vid_infos[vid]
+        # load image
+        #img = mmcv.imread(osp.join(self.img_prefix, vid_info['filenames'][frame_id]))
+        #basename = osp.basename(vid_info['filenames'][frame_id])
 
         vid_info['filename'] = vid_info['filenames'][frame_id]
         vid_info['file_name'] = vid_info['filenames'][frame_id]

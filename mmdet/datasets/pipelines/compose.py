@@ -4,6 +4,20 @@ from mmcv.utils import build_from_cfg
 
 from ..builder import PIPELINES
 
+import pdb
+import sys
+class ForkedPdb(pdb.Pdb):
+    """
+    A Pdb subclass that may be used
+     from a forked multiprocessing child
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
 
 @PIPELINES.register_module()
 class Compose(object):
@@ -37,7 +51,9 @@ class Compose(object):
         """
 
         for t in self.transforms:
+            #ForkedPdb().set_trace()
             data = t(data)
+            #ForkedPdb().set_trace()
             if data is None:
                 return None
         return data
