@@ -51,6 +51,18 @@ def multiclass_nms(multi_bboxes,
 
     return dets, kernels[keep], points[keep], strides[keep], return_inds[keep]
 
+def dice_coefficient(x, target):
+    eps = 1e-5
+    n_instance = x.size(0)
+    x = x.reshape(n_instance, -1)
+    target = target.reshape(n_instance, -1)
+    intersection = (x * target).sum(dim=1)
+    union = (x ** 2.0).sum(dim=1) + (target ** 2.0).sum(dim=1) + eps
+    loss = 1. - (2 * intersection / union)
+    return loss
+
+
+
 def parse_dynamic_params(params, channels, weight_nums, bias_nums):
     assert params.dim() == 2
     assert len(weight_nums) == len(bias_nums)

@@ -5,8 +5,7 @@ import torch.nn.functional as F
 from mmdet.core import bbox2roi
 from ..builder import DETECTORS, build_head, build_neck, build_roi_extractor, build_loss
 from .single_stage import SingleStageDetector
-from mmcv.cnn import kaiming_init
-from fvcore.nn import sigmoid_focal_loss_jit
+from .utils import split_frames, process_id, get_new_masks, aligned_bilinear
 
 
 @DETECTORS.register_module()
@@ -92,9 +91,89 @@ class IAICondInst(SingleStageDetector):
         Returns:
             dict[str, Tensor]: a dictionary of loss components
         """
-        pass
+        batch_size = self.batch_size
+        x = self.extract_feat(img)
+        feats_per_frame = split_frames(x, self.batch_size)
+        gt_ori_ids = process_id(gt_ids, batch_size, self.max_obj_num-1)
 
-        return None
+        bg_one_hot_masks, ori_one_hot_masks, gt_masks_tensor = get_new_masks(gt_masks, gt_ori_ids, x[0].device, self.max_obj_num-1)
+
+        lstt_embs = None
+        losses = dict()
+        rpn_losses_all = {}
+        roi_losses_all = {}
+        sem_losses_all = {}
+        self.lstt.restart(batch_size=batch_size, enable_id_shuffle=False)
+        prev_one_hot_masks = bg_one_hot_masks[:batch_size]
+        bce_losses = []
+        iou_losses = []
+
+        for i, feats in enumerate(feats_per_frame):
+            is_first = (i == 0)
+            indices = slice(i*batch_size, (i+1)*batch_size)
+
+            img_metas_per_frame = img_metas[indices]
+            gt_bboxes_per_frame = gt_bboxes[indices]
+            gt_labels_per_frame = gt_labels[indices]
+            gt_masks_per_frame = gt_masks[indices]
+            gt_ids_per_frame = gt_ids[indices]
+            gt_ori_ids_per_frame = gt_ori_ids[indices]
+            gt_masks_tensor_per_frame = gt_masks_tensor[indices]
+
+            new_inst_exist=False
+            for gt_id in gt_ids_per_frame:
+                if self.max_obj_num in gt_id:
+                    new_inst_exist=True
+
+            new_feat = self.encoder_projector(feats[-1])
+            new_feats = (feats[0], feats[1], feats[2], new_feat)
+
+            lstt_embs = self.lstt(new_feats, prev_one_hot_masks, new_inst_exist)
+            if lstt_embs is not None:
+                embs = [new_feats[-1]]
+                n, c, h, w = new_feats[-1].size()
+                for emb in lstt_embs:
+                    embs.append(emb.view(h, w, n, c).permute(2, 3, 0, 1))
+
+                backbone_cls_feat = self.backbone_projector(feats[-1])
+                embs.append(backbone_cls_feat)
+
+                embs = torch.cat(embs, dim=1)
+            lstt_feats = (feats[0], feats[1], feats[2], embs)
+            enc_feats = self.neck(lstt_feats)
+
+            roi_losses = self.bbox_head.forward_train(enc_feats,
+                                                     img_metas_per_frame,
+                                                     gt_bboxes_per_frame,
+                                                     gt_labels_per_frame,
+                                                     gt_bboxes_ignore, gt_masks_per_frame,
+                                                     gt_ids_per_frame)
+            for name, loss in roi_losses.items():
+                if name not in roi_losses_all:
+                    roi_losses_all[name] = [loss]
+                else:
+                    roi_losses_all[name].append(loss)
+
+            prev_one_hot_masks = ori_one_hot_masks[indices]
+
+            if is_first:
+                self.lstt.reset_memory(prev_one_hot_masks)
+            else:
+                self.lstt.update_short_term_memory(prev_one_hot_masks, new_inst_exist)
+
+        rpn_losses = {}
+        for name, loss_list in rpn_losses_all.items():
+            rpn_losses[name] = []
+            for loss in loss_list:
+                rpn_losses[name].append(sum(loss) / len(loss))
+        losses.update(rpn_losses)
+
+        roi_losses = {}
+        for name, loss in roi_losses_all.items():
+            roi_losses[name] = sum(loss) / len(loss)
+        losses.update(roi_losses)
+
+        return losses
 
     async def async_simple_test(self,
                                 img,

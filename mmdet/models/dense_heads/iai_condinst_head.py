@@ -1,3 +1,6 @@
+'''
+part code from https://github.com/open-mmlab/mmdetection/pull/5248, thanks to jiangzhengkai
+'''
 import torch
 import numpy as np
 import torch.nn as nn
@@ -5,10 +8,11 @@ import torch.nn.functional as F
 from mmcv.cnn import ConvModule, Scale, bias_init_with_prob, normal_init, kaiming_init
 from mmcv.runner import force_fp32
 
-from mmdet.core import (distance2bbox, bbox2result_with_id)
+from mmdet.core import (distance2bbox, multi_apply, bbox_overlaps,
+                        reduce_mean, unmap, bbox2result_with_id)
 from ..builder import HEADS, build_loss
 from .anchor_free_head import AnchorFreeHead
-from .utils import multiclass_nms, parse_dynamic_params, compute_locations, aligned_bilinear
+from .utils import multiclass_nms, parse_dynamic_params, compute_locations, aligned_bilinear, dice_coefficient
 
 INF = 1e8
 
@@ -223,9 +227,9 @@ class IAICondInstHead(AnchorFreeHead):
         centernesses = []
         kernel_preds = []
         for i, (x, scale) in enumerate(zip(feats, self.scales)):
-            cls_feat = x
             id_feat = x
             reg_feat = x
+            cls_feat = x
 
             for cls_conv in self.cls_convs:
                 cls_feat = cls_conv(cls_feat)
@@ -281,9 +285,8 @@ class IAICondInstHead(AnchorFreeHead):
              gt_ids,
              img_metas,
              gt_bboxes_ignore=None,
-             is_first=False):
+             gt_masks_list=None):
         """Compute losses of the head.
-        Not available for evaluation code
 
         Args:
             cls_scores (list[Tensor]): Box scores for each scale level
@@ -307,8 +310,192 @@ class IAICondInstHead(AnchorFreeHead):
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
         """
+        featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
 
-        pass
+        device = cls_scores[0].device
+
+        points_list, strides_list = self.get_points(
+            featmap_sizes, bbox_preds[0].dtype, device=device)
+
+        cls_reg_targets = self.get_targets(
+            points_list,
+            gt_bboxes,
+            gt_labels,
+            gt_ids,
+            gt_masks_list)
+
+        (labels_list, ids_list, bbox_targets_list, gt_inds_list) = cls_reg_targets
+        num_imgs = cls_scores[0].size(0)
+        # flatten cls_scores, bbox_preds and centerness
+        flatten_cls_scores = [
+            cls_score.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
+            for cls_score in cls_scores
+        ]
+        flatten_id_scores = [
+            id_score.permute(0, 2, 3, 1).reshape(-1, self.id_out_channels)
+            for id_score in id_scores
+        ]
+        flatten_bbox_preds = [
+            bbox_pred.permute(0, 2, 3, 1).reshape(-1, 4)
+            for bbox_pred in bbox_preds
+        ]
+        flatten_centerness = [
+            centerness.permute(0, 2, 3, 1).reshape(-1)
+            for centerness in centernesses
+        ]
+        flatten_points = torch.cat(
+            [points.repeat(num_imgs, 1) for points in points_list])
+        # concat per level image
+        concat_lvl_labels = []
+        concat_lvl_ids = []
+        concat_lvl_bbox_targets = []
+        for i in range(5):
+            concat_lvl_labels.append(
+                torch.cat([labels[i] for labels in labels_list]))
+            concat_lvl_ids.append(
+                torch.cat([ids[i] for ids in ids_list]))
+            concat_lvl_bbox_targets.append(
+                torch.cat([bbox_targets[i] for bbox_targets in bbox_targets_list]))
+
+        flatten_labels = torch.cat(concat_lvl_labels)
+        flatten_ids = torch.cat(concat_lvl_ids)
+        flatten_bbox_targets = torch.cat(concat_lvl_bbox_targets)
+        flatten_cls_scores = torch.cat(flatten_cls_scores)
+        flatten_id_scores = torch.cat(flatten_id_scores)
+        flatten_bbox_preds = torch.cat(flatten_bbox_preds)
+        flatten_centerness = torch.cat(flatten_centerness)
+
+        pos_inds = ((flatten_labels >= 0)
+                    & (flatten_labels < self.num_classes)).nonzero(as_tuple=False).squeeze(1)
+
+        num_pos = torch.tensor(
+            len(pos_inds), dtype=torch.float, device=bbox_preds[0].device)
+        num_pos = max(reduce_mean(num_pos), 1.0)
+        # classification loss
+        loss_cls = self.loss_cls(
+            flatten_cls_scores,
+            flatten_labels,
+            avg_factor=num_pos)
+        use_track_only = False #True
+        if use_track_only:
+            id_pos_inds = ((flatten_ids>= 0)
+                        & (flatten_ids< 20)).nonzero(as_tuple=False).squeeze(1)
+
+            num_id_pos = torch.tensor(
+                len(id_pos_inds), dtype=torch.float, device=bbox_preds[0].device)
+            num_id_pos = max(reduce_mean(num_id_pos), 1.0)
+        else:
+            num_id_pos = num_pos
+
+        loss_id = self.loss_id(
+            flatten_id_scores,
+            flatten_ids,
+            avg_factor=num_id_pos)
+        #else:
+        #loss_id = 0
+
+        if len(pos_inds) > 0:
+            pos_bbox_targets = flatten_bbox_targets[pos_inds]
+            pos_bbox_pred = flatten_bbox_preds[pos_inds]
+            pos_points = flatten_points[pos_inds]
+            pos_centerness = flatten_centerness[pos_inds]
+
+            pos_centerness_targets = self.centerness_target(pos_bbox_targets)
+            pos_decode_bbox_pred = distance2bbox(
+                pos_points, pos_bbox_pred)
+            pos_decode_bbox_targets = distance2bbox(
+                pos_points, pos_bbox_targets)
+
+            # centerness weighted iou loss
+            centerness_denorm = max(
+                reduce_mean(pos_centerness_targets.sum().detach()), 1e-6)
+            # regression loss
+            loss_bbox = self.loss_bbox(
+                pos_decode_bbox_pred,
+                pos_decode_bbox_targets,
+                weight=pos_centerness_targets,
+                avg_factor=centerness_denorm)
+            # centerness loss
+            loss_centerness = self.loss_centerness(
+                pos_centerness,
+                pos_centerness_targets,
+                avg_factor=num_pos)
+        else:
+            try:
+                loss_bbox = flatten_bbox_preds.sum() * 0
+                loss_centerness = flatten_centerness.sum() * 0
+                #centerness_targets = torch.tensor(0).cuda()
+            except:
+                import pdb
+                pdb.set_trace()
+        # loss mask
+        loss_mask = 0
+        num_mask = 0
+        flatten_kernel_preds = [
+            kernel.permute(0, 2, 3, 1).reshape(num_imgs, -1, 169) for kernel in kernel_preds
+        ]
+        flatten_kernel_preds = torch.cat(flatten_kernel_preds, dim=1)
+        for i in range(num_imgs):
+            flatten_labels_i = torch.cat(labels_list[i])
+            pos_inds = ((flatten_labels_i >= 0)
+                    & (flatten_labels_i < self.num_classes)).nonzero(as_tuple=False).squeeze(1)
+            # mask feat
+            mask_feat = mask_feats[i]
+
+            if len(pos_inds) == 0:
+                loss_mask += mask_feat.sum() * 0
+                continue
+
+            bbox_pred_list = [
+                bbox_preds[level][i].permute(1, 2, 0).reshape(-1, 4).detach()
+                for level in range(5)
+            ]
+            bbox_pred = torch.cat(bbox_pred_list)[pos_inds]
+            points = torch.cat(points_list)[pos_inds]
+            pos_det_bboxes = distance2bbox(points, bbox_pred)
+            idx_gt = gt_inds_list[i]
+            mask_head_params = flatten_kernel_preds[i][pos_inds]
+            strides = torch.cat(strides_list)[pos_inds]
+
+            # mask loss
+            num_instance = len(points)
+            mask_head_inputs = self.relative_coordinate_feature_generator(
+                mask_feat,
+                points,
+                strides)
+            weights, biases = parse_dynamic_params(
+                mask_head_params,
+                8,
+                self.weight_nums,
+                self.bias_nums)
+            mask_logits = self.mask_heads_forward(
+                mask_head_inputs,
+                weights,
+                biases,
+                num_instance)
+            mask_logits = mask_logits.reshape(-1, 1, mask_feat.size(1), mask_feat.size(2))
+            mask_logits = aligned_bilinear(mask_logits, 2).squeeze(1)
+            # pad gt mask
+            img_h, img_w = mask_feat.size(1) * 8, mask_feat.size(2) * 8
+            h, w = gt_masks_list[i].size()[1:]
+            gt_mask = F.pad(gt_masks_list[i], (0, img_w - w, 0, img_h - h), "constant", 0)
+            out_stride = 4
+            start = int(out_stride // 2)
+            gt_mask = gt_mask[:, start::out_stride, start::out_stride]
+            gt_mask = gt_mask.gt(0.5).float()
+            gt_mask = torch.index_select(gt_mask, 0, idx_gt).contiguous()
+            loss_mask += dice_coefficient(mask_logits.sigmoid(), gt_mask).sum()
+            num_mask += len(idx_gt)
+
+        if num_mask > 0:
+            loss_mask = loss_mask / num_mask
+
+        return dict(
+            loss_cls=loss_cls,
+            loss_id=loss_id,
+            loss_bbox=loss_bbox,
+            loss_centerness=loss_centerness,
+            loss_mask=loss_mask)
 
     def forward_train(self,
                       x,
@@ -341,9 +528,27 @@ class IAICondInstHead(AnchorFreeHead):
         Returns:
             losses: (dict[str, Tensor]): A dictionary of loss components.
         """
-        pass
+        outs = self(x)
+        if gt_labels is None:
+            loss_inputs = outs + (gt_bboxes, img_metas)
+        else:
+            loss_inputs = outs + (gt_bboxes, gt_labels, gt_ids, img_metas)
 
-        return None
+        # gt mask
+        gt_masks_list = []
+        for i in range(len(gt_labels)):
+            gt_label = gt_labels[i]
+            gt_masks_list.append(
+                torch.from_numpy(
+                    gt_masks[i].to_ndarray()).float().to(gt_label.device))
+
+        losses = self.loss(*loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore, gt_masks_list=gt_masks_list)
+
+        if proposal_cfg is None:
+            return losses
+        else:
+            proposal_list = self.get_bboxes(*outs, img_metas, cfg=proposal_cfg)
+            return losses, proposal_list
 
     def mask_heads_forward(self, features, weights, biases, num_instances):
         '''Mask head forward process'''
@@ -378,6 +583,16 @@ class IAICondInstHead(AnchorFreeHead):
             mask_feat.repeat(num_instance, 1, 1, 1)], dim=1)
         coordinates_feat = coordinates_feat.view(1, -1, H, W)
         return coordinates_feat
+
+    def centerness_target(self, pos_bbox_targets):
+        # only calculate pos centerness targets, otherwise there may be nan
+        left_right = pos_bbox_targets[:, [0, 2]]
+        top_bottom = pos_bbox_targets[:, [1, 3]]
+        centerness_targets = (
+            left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * (
+            top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
+        return torch.sqrt(centerness_targets)
+
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
     def get_bboxes(self,
@@ -739,8 +954,153 @@ class IAICondInstHead(AnchorFreeHead):
         """Get targets for points from ground truth annotations
            Not available for evaluation code
         """
+        assert len(points) == len(self.regress_ranges)
+        num_levels = len(points)
+        # expand regress ranges to align with points
+        expanded_regress_ranges = [
+            points[i].new_tensor(self.regress_ranges[i])[None].expand_as(
+                points[i]) for i in range(num_levels)
+        ]
+        # concat all levels points and regress ranges
+        concat_regress_ranges = torch.cat(expanded_regress_ranges, dim=0)
+        concat_points = torch.cat(points, dim=0)
 
-        return None
+        # the number of points per img, per lvl
+        num_points = [center.size(0) for center in points]
+
+        # get labels and bbox_targets of each image
+        labels_list, ids_list, bbox_targets_list, gt_inds_list = multi_apply(
+            self._get_targets_single,
+            gt_bboxes_list,
+            gt_labels_list,
+            gt_masks_list,
+            gt_ids_list,
+            points=concat_points,
+            regress_ranges=concat_regress_ranges,
+            num_points_per_lvl=num_points)
+
+        # split to per img, per level
+        labels_list = [labels.split(num_points, 0) for labels in labels_list]
+        ids_list = [ids.split(num_points, 0) for ids in ids_list]
+        bbox_targets_list = [
+            bbox_targets.split(num_points, 0)
+            for bbox_targets in bbox_targets_list
+        ]
+
+        return labels_list, ids_list, bbox_targets_list, gt_inds_list
+
+    def _get_targets_single(self,
+                           gt_bboxes,
+                           gt_labels,
+                           gt_masks,
+                           gt_ids,
+                           points,
+                           regress_ranges,
+                           num_points_per_lvl):
+        """Compute regression and classification targets for a single image."""
+        num_points = points.size(0)
+        num_gts = gt_labels.size(0)
+
+        # TODO make compatible
+        if num_gts == 0:
+            #raise NotImplementedError
+            return gt_labels.new_full((num_points,), self.num_classes), gt_labels.new_full((num_points,), self.max_obj_num),\
+                   gt_bboxes.new_zeros((num_points, 4)), gt_labels.new_zeros(num_points)
+
+        areas = (gt_bboxes[:, 2] - gt_bboxes[:, 0]) * (
+            gt_bboxes[:, 3] - gt_bboxes[:, 1])
+
+        # TODO: figure out why these two are different
+        # areas = areas[None].expand(num_points, num_gts)
+        areas = areas[None].repeat(num_points, 1)
+        regress_ranges = regress_ranges[:, None, :].expand(
+            num_points, num_gts, 2)
+        gt_bboxes = gt_bboxes[None].expand(num_points, num_gts, 4)
+        xs, ys = points[:, 0], points[:, 1]
+        xs = xs[:, None].expand(num_points, num_gts)
+        ys = ys[:, None].expand(num_points, num_gts)
+
+        left = xs - gt_bboxes[..., 0]
+        right = gt_bboxes[..., 2] - xs
+        top = ys - gt_bboxes[..., 1]
+        bottom = gt_bboxes[..., 3] - ys
+        bbox_targets = torch.stack((left, top, right, bottom), -1)
+
+        if self.center_sampling:
+            # condition1: inside a `center bbox`
+            radius = self.center_sample_radius
+
+            # use masks to determine center region
+            _, h, w = gt_masks.size()
+            yys = torch.arange(0, h, dtype=torch.float32, device=gt_masks.device)
+            xxs = torch.arange(0, w, dtype=torch.float32, device=gt_masks.device)
+
+            m00 = gt_masks.sum(dim=-1).sum(dim=-1).clamp(min=1e-6)
+            m10 = (gt_masks * xxs).sum(dim=-1).sum(dim=-1)
+            m01 = (gt_masks * yys[:, None]).sum(dim=-1).sum(dim=-1)
+            center_xs = m10 / m00
+            center_ys = m01 / m00
+            center_xs = center_xs[None].expand(num_points, num_gts)
+            center_ys = center_ys[None].expand(num_points, num_gts)
+
+            center_gts = torch.zeros_like(gt_bboxes)
+            stride = center_xs.new_zeros(center_xs.shape)
+
+            # project the points on current lvl back to the `original` sizes
+            lvl_begin = 0
+            for lvl_idx, num_points_lvl in enumerate(num_points_per_lvl):
+                lvl_end = lvl_begin + num_points_lvl
+                stride[lvl_begin:lvl_end] = self.strides[lvl_idx] * radius
+                lvl_begin = lvl_end
+
+            x_mins = center_xs - stride
+            y_mins = center_ys - stride
+            x_maxs = center_xs + stride
+            y_maxs = center_ys + stride
+            center_gts[..., 0] = torch.where(x_mins > gt_bboxes[..., 0],
+                                             x_mins, gt_bboxes[..., 0])
+            center_gts[..., 1] = torch.where(y_mins > gt_bboxes[..., 1],
+                                             y_mins, gt_bboxes[..., 1])
+            center_gts[..., 2] = torch.where(x_maxs > gt_bboxes[..., 2],
+                                             gt_bboxes[..., 2], x_maxs)
+            center_gts[..., 3] = torch.where(y_maxs > gt_bboxes[..., 3],
+                                             gt_bboxes[..., 3], y_maxs)
+
+            cb_dist_left = xs - center_gts[..., 0]
+            cb_dist_right = center_gts[..., 2] - xs
+            cb_dist_top = ys - center_gts[..., 1]
+            cb_dist_bottom = center_gts[..., 3] - ys
+            center_bbox = torch.stack(
+                (cb_dist_left, cb_dist_top, cb_dist_right, cb_dist_bottom), -1)
+            inside_gt_bbox_mask = center_bbox.min(-1)[0] > 0
+        else:
+            # condition1: inside a gt bbox
+            inside_gt_bbox_mask = bbox_targets.min(-1)[0] > 0
+
+        # condition2: limit the regression range for each location
+        max_regress_distance = bbox_targets.max(-1)[0]
+        inside_regress_range = (
+            (max_regress_distance >= regress_ranges[..., 0])
+            & (max_regress_distance <= regress_ranges[..., 1]))
+
+        # if there are still more than one objects for a location,
+        # we choose the one with minimal area
+        areas[inside_gt_bbox_mask == 0] = INF
+        areas[inside_regress_range == 0] = INF
+        min_area, min_area_inds = areas.min(dim=1)
+
+        labels = gt_labels[min_area_inds]
+        labels[min_area == INF] = self.num_classes  # set as BG
+
+        ids = gt_ids[min_area_inds]
+        #ids[min_area == INF] = self.num_classes  # set as BG
+        ids[min_area == INF] = self.max_obj_num
+        bbox_targets = bbox_targets[range(num_points), min_area_inds]
+        pot_gt_inds = min_area_inds[labels < self.num_classes]
+
+        return labels, ids, bbox_targets, pot_gt_inds
+
+
 
     def get_points(self, featmap_sizes, dtype, device):
         """Get points according to feature map sizes.
