@@ -25,5 +25,6 @@ pip install mmcv-full==1.3.8 -f https://download.openmmlab.com/mmcv/dist/cu92/1.
 
 Install IAI
 ```
+cd IAI
 pip install -v -e .
 ```
