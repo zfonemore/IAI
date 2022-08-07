@@ -16,6 +16,7 @@ pip install git+https://github.com/youtubevos/cocoapi.git#"egg=pycocotools&subdi
 ```
 
 Install MMCV
+
 When installing mmcv, you can set [cu_version} to cu92 or other version, {torch_version} to 1.5.0 or other version.
 For example, if your environment is cuda 9.2 & torch 1.5.0, use 
 ```
