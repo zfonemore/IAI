@@ -27,7 +27,6 @@ def one_hot_mask(gt_masks, gt_ids_list, max_obj_num, bg=False):
     num = 0
     n, h, w = gt_masks.shape
     new_masks = gt_masks.new_zeros(len(gt_ids_list), max_obj_num+2, h, w)
-    #new_masks[:, max_obj_num+1, :, :] = 1
 
     if bg:
         return new_masks
@@ -46,71 +45,50 @@ def get_new_masks(gt_masks, gt_ori_ids, device, max_obj_num, one_hot=True, gt_la
     INF = 1e12
     if gt_labels is not None:
         for gt_id, gt_label, gt_mask in zip(gt_ori_ids, gt_labels, gt_masks):
-            try:
-                gt_mask_tensor = gt_mask.to_tensor(dtype=torch.float32, device=device)
-                h, w = gt_mask_tensor.size()[-2:]
-                if len(gt_mask_tensor) == 0:
-                    inds = gt_mask_tensor.new_zeros(h*w, dtype=torch.long)
-                    per_im_id_masks = inds
-                    per_im_id_masks[:] = max_obj_num + 1
-                    per_im_cls_masks = inds
-                    per_im_cls_masks[:] = 40
-                else:
-                    areas = gt_mask_tensor.sum(dim=-1).sum(dim=-1)
-                    areas = areas[:, None, None].repeat(1, h, w)
-                    areas[gt_mask_tensor == 0] = INF
-                    areas = areas.permute(1, 2, 0).reshape(h * w, -1)
-                    min_areas, inds = areas.min(dim=1)
-                    per_im_id_masks = gt_id[inds]
-                    per_im_id_masks[min_areas == INF] = max_obj_num+1
-                    per_im_cls_masks = gt_label[inds]
-                    per_im_cls_masks[min_areas == INF] = 40
-                per_im_id_masks = per_im_id_masks.reshape(h, w)
-                per_im_cls_masks = per_im_cls_masks.reshape(h, w)
-                id_masks.append(per_im_id_masks)
-                cls_masks.append(per_im_cls_masks)
-            except:
-                import pdb
-                pdb.set_trace()
-
-
+            gt_mask_tensor = gt_mask.to_tensor(dtype=torch.float32, device=device)
+            h, w = gt_mask_tensor.size()[-2:]
+            if len(gt_mask_tensor) == 0:
+                inds = gt_mask_tensor.new_zeros(h*w, dtype=torch.long)
+                per_im_id_masks = inds
+                per_im_id_masks[:] = max_obj_num + 1
+                per_im_cls_masks = inds
+                per_im_cls_masks[:] = 40
+            else:
+                areas = gt_mask_tensor.sum(dim=-1).sum(dim=-1)
+                areas = areas[:, None, None].repeat(1, h, w)
+                areas[gt_mask_tensor == 0] = INF
+                areas = areas.permute(1, 2, 0).reshape(h * w, -1)
+                min_areas, inds = areas.min(dim=1)
+                per_im_id_masks = gt_id[inds]
+                per_im_id_masks[min_areas == INF] = max_obj_num+1
+                per_im_cls_masks = gt_label[inds]
+                per_im_cls_masks[min_areas == INF] = 40
+            per_im_id_masks = per_im_id_masks.reshape(h, w)
+            per_im_cls_masks = per_im_cls_masks.reshape(h, w)
+            id_masks.append(per_im_id_masks)
+            cls_masks.append(per_im_cls_masks)
     else:
         gt_masks_list = []
         for gt_id, gt_mask in zip(gt_ori_ids, gt_masks):
-            try:
-                gt_mask_tensor = gt_mask.to_tensor(dtype=torch.float32, device=device)
-                gt_masks_list.append(gt_mask_tensor)
-                h, w = gt_mask_tensor.size()[-2:]
-                if len(gt_mask_tensor) == 0:
-                    inds = gt_mask_tensor.new_zeros(h*w, dtype=torch.long)
-                    per_im_id_masks = inds
-                    per_im_id_masks[:] = max_obj_num + 1
-                else:
-                    areas = gt_mask_tensor.sum(dim=-1).sum(dim=-1)
-                    areas = areas[:, None, None].repeat(1, h, w)
-                    areas[gt_mask_tensor == 0] = INF
-                    areas = areas.permute(1, 2, 0).reshape(h * w, -1)
-                    min_areas, inds = areas.min(dim=1)
-                    per_im_id_masks = gt_id[inds]
-                    per_im_id_masks[min_areas == INF] = max_obj_num+1
-                per_im_id_masks = per_im_id_masks.reshape(h, w)
-                id_masks.append(per_im_id_masks)
-            except:
-                import pdb
-                pdb.set_trace()
+            gt_mask_tensor = gt_mask.to_tensor(dtype=torch.float32, device=device)
+            gt_masks_list.append(gt_mask_tensor)
+            h, w = gt_mask_tensor.size()[-2:]
+            if len(gt_mask_tensor) == 0:
+                inds = gt_mask_tensor.new_zeros(h*w, dtype=torch.long)
+                per_im_id_masks = inds
+                per_im_id_masks[:] = max_obj_num + 1
+            else:
+                areas = gt_mask_tensor.sum(dim=-1).sum(dim=-1)
+                areas = areas[:, None, None].repeat(1, h, w)
+                areas[gt_mask_tensor == 0] = INF
+                areas = areas.permute(1, 2, 0).reshape(h * w, -1)
+                min_areas, inds = areas.min(dim=1)
+                per_im_id_masks = gt_id[inds]
+                per_im_id_masks[min_areas == INF] = max_obj_num+1
+            per_im_id_masks = per_im_id_masks.reshape(h, w)
+            id_masks.append(per_im_id_masks)
 
     id_masks = pad_mask(id_masks, max_obj_num+1)
-    '''
-    for i in range(len(id_masks)):
-        pad_sum = (id_masks[i] == 0).sum()
-        ori_sum = gt_masks_list[i][0].sum()
-        if (pad_sum > 0) and (pad_sum != ori_sum):
-            print('fuck')
-            import pdb
-            pdb.set_trace()
-        #print('pad_sum:', (id_masks[i] == 0).sum())
-        #print('ori_sum:', gt_masks_list[i][0].sum())
-    '''
     id_masks = torch.stack(id_masks, dim=0)
     id_masks = id_masks.unsqueeze(1)
     if gt_labels is not None:
