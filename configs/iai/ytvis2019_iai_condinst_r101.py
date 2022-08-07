@@ -3,7 +3,6 @@ batch_size = 2
 max_obj_num = 20
 model = dict(
     type='IAICondInst',
-    pretrained='torchvision://resnet101',
     id_cfg=dict(num_frames=5, batch_size=batch_size, max_obj_num=max_obj_num),
     backbone=dict(
         type='ResNet',
@@ -163,6 +162,6 @@ device_ids = range(8)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './ytvis2019_iai_condinst_r101/'
-load_from = None
+load_from = 'model/condinst_r101.pth'
 resume_from = None
 workflow = [('train', 1)]
