@@ -8,7 +8,7 @@ from .transforms import (ImageTransform, BboxTransform, MaskTransform,
                          Numpy2Tensor)
 '''
 import torch
-from pycocotools.ytvos import YTVOS
+from .pycoco_ytvos import YTVOS
 from mmcv.parallel import DataContainer as DC
 from .builder import DATASETS
 from collections import Sequence
