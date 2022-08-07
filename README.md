@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This repo is the evaluation code of IAI + CondInst model for video instance segmentation, and we will release training code later. The overview of IAI paradigm is shown below. 
+This repo is the official implementation of IAI paradigm for video instance segmentation. The overview of IAI paradigm is shown below. 
 
 <img src='doc/IAI_framework.png'>
 
