@@ -162,6 +162,6 @@ device_ids = range(8)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './ytvis2019_iai_condinst_r101/'
-load_from = 'model/condinst_r101.pth'
+load_from = './model/condinst_r101.pth'
 resume_from = None
 workflow = [('train', 1)]
