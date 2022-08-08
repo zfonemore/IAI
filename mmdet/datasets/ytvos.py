@@ -3,10 +3,6 @@ import os.path as osp
 import random
 import mmcv
 from .custom import CustomDataset
-'''
-from .transforms import (ImageTransform, BboxTransform, MaskTransform,
-                         Numpy2Tensor)
-'''
 import torch
 from .pycoco_ytvos import YTVOS
 from mmcv.parallel import DataContainer as DC
@@ -224,7 +220,6 @@ class YTVOSDataset(CustomDataset):
             interval = random.randint(1,min(3, vid_len - curr_frame_id - i))
             curr_frame_id += interval
             frame_ids.append(vid_frame_ids[curr_frame_id])
-            #frame_ids.append(vid_frame_ids[random.randint(0, vid_len-1)])
 
         data_list = []
         obj_ids_list = []
@@ -241,9 +236,6 @@ class YTVOSDataset(CustomDataset):
             data_list.append(data)
 
         obj_ids_list = np.unique(np.array(obj_ids_list))
-        #random_idx = random.sample(range(20), len(obj_ids_list))
-        #map = {x: random_idx[i] for i, x in enumerate(obj_ids_list)}
-        #if not self.ori_ids:
         map = {x: i for i, x in enumerate(obj_ids_list)}
         for data in data_list:
             data['gt_ids']._data.apply_(lambda x:map[x])
