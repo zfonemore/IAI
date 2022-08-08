@@ -73,14 +73,13 @@ class YTVOSDataset(CustomDataset):
         'fox','deer','owl','surfboard','airplane','truck','zebra','tiger',
         'elephant','snowboard','boat','shark','mouse','frog','eagle','earless_seal',
         'tennis_racket')
-    #CLASSES=('airplane', 'bear', 'bird', 'boat', 'car', 'cat', 'cow',
-    #         'deer', 'dog', 'duck', 'earless_seal', 'elephant', 'fish',
-    #         'flying_disc', 'fox', 'frog', 'giant_panda', 'giraffe',
-    #         'horse', 'leopard', 'lizard', "monkey", "motorbike", "mouse",
-    #         "parrot", "person", "rabbit", "shark", "skateboard", "snake",
-    #         "snowboard", "squirrel", "surfboard", "tennis_racket", "tiger",
-    #         "train", "truck", "turtle", "whale", "zebra"
-    #         )
+    YTVIS2021_CLASSES=('airplane', 'bear', 'bird', 'boat', 'car', 'cat', 'cow',
+        'deer', 'dog', 'duck', 'earless_seal', 'elephant', 'fish',
+        'flying_disc', 'fox', 'frog', 'giant_panda', 'giraffe',
+        'horse', 'leopard', 'lizard', "monkey", "motorbike", "mouse",
+        "parrot", "person", "rabbit", "shark", "skateboard", "snake",
+        "snowboard", "squirrel", "surfboard", "tennis_racket", "tiger",
+        "train", "truck", "turtle", "whale", "zebra")
 
 
     def __init__(self,
@@ -97,33 +96,17 @@ class YTVOSDataset(CustomDataset):
                  aug_ref_bbox_param=None,
                  resize_keep_ratio=True,
                  test_mode=False,
-                 pipeline=None,
-                 ori_ids=False):
+                 pipeline=None):
         # prefix of images path
         self.img_prefix = img_prefix
-        #self.seg_prefix = img_prefix[:-10] + 'Annotations'
-        self.seg_prefix = seg_prefix #img_prefix[:-10] + 'Annotations'
+        self.seg_prefix = seg_prefix
 
         # load annotations (and proposals)
-        self.vid_infos = self.load_annotations(ann_file)
         img_ids = []
-        import random
-        #sample_rate = 0.2
-        sample_num = 6
-        import numpy as np
+        self.vid_infos = self.load_annotations(ann_file)
         for idx, vid_info in enumerate(self.vid_infos):
-          sample = False
-          #for frame_id in range(len(vid_info['filenames'])):
-          if test_mode:
-              for frame_id in range(len(vid_info['filenames'])):
-                img_ids.append((idx, frame_id))
-          else:
-              for frame_id in np.linspace(0, len(vid_info['filenames'])-1, sample_num, dtype=int):
-                img_ids.append((idx, frame_id))
-                #if test_mode:
-                #    img_ids.append((idx, frame_id))
-                #elif random.random() <= sample_rate:
-                #    img_ids.append((idx, frame_id))
+          for frame_id in range(len(vid_info['filenames'])):
+            img_ids.append((idx, frame_id))
 
         self.img_ids = img_ids
         self.proposal_file = proposal_file
@@ -131,6 +114,7 @@ class YTVOSDataset(CustomDataset):
             self.proposals = self.load_proposals(proposal_file)
         else:
             self.proposals = None
+
         # filter images with no annotation during training
         if not test_mode:
             valid_inds = [i for i, (v, f) in enumerate(self.img_ids)
@@ -141,8 +125,6 @@ class YTVOSDataset(CustomDataset):
                 valid_inds = [i for i in range(len(vid_info['filenames']))
                                 if len(self.get_ann_info(idx, i)['bboxes'])]
                 self.vid_ids.append(valid_inds)
-
-        # (long_edge, short_edge) or [(long1, short1), (long2, short2), ...]
 
         # max proposals per image
         self.num_max_proposals = num_max_proposals
@@ -172,7 +154,6 @@ class YTVOSDataset(CustomDataset):
 
         # num_frames in a video
         self.num_frames = 5
-        self.ori_ids = False#ori_ids
 
 
     def __len__(self):
@@ -180,26 +161,9 @@ class YTVOSDataset(CustomDataset):
         if self.test_mode:
             return len(self.img_ids)
         else:
-            return len(self.vid_infos) * 5#7
-
-    '''
-    def __getitem__(self, idx):
-        if self.test_mode:
-            return self.prepare_test_img(self.img_ids[idx])
-        data = self.prepare_train_img(self.img_ids[idx])
-        return data
-    '''
+            return len(self.vid_infos) * 5
 
     def __getitem__(self, idx):
-        if not self.test_mode:
-            idx = idx
-        '''
-        if self.cls_mode:
-            data, obj_ids, obj_nums = self.prepare_train_img(self.img_ids[idx])
-
-            return data
-        '''
-
         if self.test_mode:
             return self.prepare_test_img(self.img_ids[idx])
 
@@ -315,18 +279,10 @@ class YTVOSDataset(CustomDataset):
         return random.choice(valid_samples)
 
     def prepare_train_img(self, idx, scale=None):
-        # prepare a pair of image in a sequence
         vid,  frame_id = idx
         vid_info = self.vid_infos[vid]
-        # load image
-        #img = mmcv.imread(osp.join(self.img_prefix, vid_info['filenames'][frame_id]))
-        #basename = osp.basename(vid_info['filenames'][frame_id])
 
-        # load reference image
-        #_, ref_frame_id = self.sample_ref(idx)
-        #ref_img = mmcv.imread(osp.join(self.img_prefix, vid_info['filenames'][ref_frame_id]))
-        # obj ids attribute does not exist in current annotation
-        # need to add it
+        # obj ids attribute does not exist in current annotation, need to add it
         ann = self.get_ann_info(vid, frame_id)
         ann['seg_map'] = vid_info['filenames'][frame_id].replace('jpg', 'png')
         obj_ids = ann['obj_ids']
@@ -338,44 +294,17 @@ class YTVOSDataset(CustomDataset):
         results = dict(img_info=vid_info, ann_info=ann)
 
         self.pre_pipeline(results)
+        # sync scale for multiple gpus training
         if scale is not None:
             results['scale'] = scale
         results_processed = self.pipeline(results)
 
         return results_processed, obj_ids, obj_nums
-        '''
-        vid_info['filename'] = vid_info['filenames'][ref_frame_id]
-        vid_info['file_name'] = vid_info['filenames'][ref_frame_id]
-
-        ref_ann = self.get_ann_info(vid, ref_frame_id)
-        ref_results = dict(img_info=vid_info, ann_info=ref_ann)
-
-        self.pre_pipeline(ref_results)
-        ref_results_processed = self.pipeline(ref_results)
-
-        gt_ids = ann['obj_ids']
-        ref_ids = ref_ann['obj_ids']
-        gt_pids = [ref_ids.index(i)+1 if i in ref_ids else 0 for i in gt_ids]
-
-        results_combine = results_processed
-        results_combine['ref_img'] = ref_results_processed['img']
-        results_combine['ref_labels'] = ref_results_processed['gt_labels']
-        results_combine['ref_bboxes'] = ref_results_processed['gt_bboxes']
-        results_combine['ref_masks'] = ref_results_processed['gt_masks']
-
-        if self.with_track:
-            results_combine['gt_pids'] = DC(to_tensor(gt_pids))
-
-        return results_combine
-        '''
 
     def prepare_test_img(self, idx):
         """Prepare an image for testing (multi-scale and flipping)"""
         vid,  frame_id = idx
         vid_info = self.vid_infos[vid]
-        # load image
-        #img = mmcv.imread(osp.join(self.img_prefix, vid_info['filenames'][frame_id]))
-        #basename = osp.basename(vid_info['filenames'][frame_id])
 
         vid_info['filename'] = vid_info['filenames'][frame_id]
         vid_info['file_name'] = vid_info['filenames'][frame_id]
