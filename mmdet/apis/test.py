@@ -10,87 +10,8 @@ import torch.distributed as dist
 import numpy as np
 from mmcv.image import tensor2imgs
 from mmcv.runner import get_dist_info
+import pycocotools.mask as mask_util
 
-from mmdet.core import encode_mask_results
-
-
-def results2json_videoseg(dataset, results, out_file):
-    json_results = []
-    vid_objs = {}
-
-    for idx in range(len(dataset)):
-      vid_id, frame_id = dataset.img_ids[idx]
-      if idx == len(dataset) - 1 :
-        is_last = True
-      else:
-        _, frame_id_next = dataset.img_ids[idx+1]
-        is_last = frame_id_next == 0
-      det, seg = results[idx]
-      for obj_id in det:
-        bbox = det[obj_id]['bbox']
-        segm = seg[obj_id]
-        label = det[obj_id]['label']
-        if obj_id not in vid_objs:
-            vid_objs[obj_id] = {'scores':[],'cats':[], 'segms':{}}
-        vid_objs[obj_id]['scores'].append(bbox[4])
-        vid_objs[obj_id]['cats'].append(label)
-        segm['counts'] = segm['counts'].decode()
-        vid_objs[obj_id]['segms'][frame_id] = segm
-      if is_last:
-        # store results of  the current video
-        for obj_id, obj in vid_objs.items():
-          data = dict()
-
-          data['video_id'] = vid_id + 1
-          data['score'] = np.array(obj['scores']).mean().item()
-          # majority voting for sequence category
-          data['category_id'] = np.bincount(np.array(obj['cats'])).argmax().item() + 1
-          vid_seg = []
-          for fid in range(frame_id + 1):
-            if fid in obj['segms']:
-              vid_seg.append(obj['segms'][fid])
-            else:
-              vid_seg.append(None)
-          data['segmentations'] = vid_seg
-          json_results.append(data)
-        vid_objs = {}
-    if not osp.exists('./output'):
-        import os
-        os.mkdir('./output')
-    mmcv.dump(json_results, out_file)
-
-def manage_video_instance(results, scores_dict, first_frame, last_frame, new_results):
-    ''' manage instance category & confidence score in a video
-        average condidence scores across frames & get valid categories through the video
-    '''
-    new_id = 0
-    new_ids_dict = {}
-    new_scores_dict = {}
-    new_labels_dict = {}
-    for id, cls_scores in scores_dict.items():
-        scores, labels = torch.topk(cls_scores, 5)
-        valid_idx = (scores >= 0.05) & (labels != 40)
-        new_scores_dict[id] = scores[valid_idx]
-        new_labels_dict[id] = labels[valid_idx]
-        new_ids_dict[id] = torch.arange(new_id, new_id+sum(valid_idx))
-        new_id += sum(valid_idx)
-
-    for j in range(first_frame, last_frame):
-        new_result = {}
-        new_bbox_results = {}
-        new_segm_results = {}
-        for id in results[j][0].keys():
-            for label, score, new_id in zip(new_labels_dict[id], new_scores_dict[id], new_ids_dict[id]):
-                new_bbox_result = {}
-                new_bbox_result['bbox'] = np.append(results[j][0][id]['bbox'][:4], score.item())
-                new_bbox_result['label'] = label.item()
-                import copy
-                new_segm_result = copy.deepcopy(results[j][1][id])
-                new_bbox_results[new_id.item()] = new_bbox_result
-                new_segm_results[new_id.item()] = new_segm_result
-        new_result = [(new_bbox_results, new_segm_results)]
-
-        new_results.extend(new_result)
 
 def single_gpu_test(model,
                     data_loader,
@@ -100,36 +21,39 @@ def single_gpu_test(model,
     model.eval()
     results = []
     dataset = data_loader.dataset
-    prog_bar = mmcv.ProgressBar(len(dataset))
-    curr_video_first_frame = 0
-    new_results = []
+    prog_bar = mmcv.ProgressBar(dataset.total_frames)
     for i, data in enumerate(data_loader):
-        is_end = (i == len(dataset)-1)
         with torch.no_grad():
-            result, scores_dict = model(return_loss=False, rescale=True, is_end=is_end, **data)
-
-        img_metas = data['img_metas'][0].data[0]
-        if scores_dict is not None:
-            if img_metas[0]['is_first']:
-                curr_video_last_frame = i
-                manage_video_instance(results, scores_dict, curr_video_first_frame, curr_video_last_frame, new_results)
-                curr_video_first_frame = i
-        batch_size = len(result)
+            scores, labels, masks = model(return_loss=False, rescale=True, **data)
 
         # encode mask results
-        if isinstance(result[0], tuple):
-            result = [(bbox_results, encode_mask_results(mask_results))
-                  for bbox_results, mask_results in result]
-        results.extend(result)
+        for score, label, mask in zip(scores, labels, masks):
+            segms = []
+            for mask_perframe in mask:
+                rle = mask_util.encode(
+                    np.array(mask_perframe[:, :, np.newaxis], order='F',
+                    dtype='uint8'))[0]  # encoded with RLE
+                rle['counts'] = rle['counts'].decode()
+                segms.append(rle)
 
-        for _ in range(batch_size):
+            result = {}
+            result['video_id'] = i + 1
+            result['score'] = score.item()
+# majority voting for sequence category
+            result['category_id'] = label.item() + 1
+            result['segmentations'] = segms
+
+            results.append(result)
+
+        video_len = len(data['img'][0])
+        for _ in range(video_len):
             prog_bar.update()
 
-    if scores_dict is not None:
-        curr_video_last_frame = len(dataset)
-        manage_video_instance(results, scores_dict, curr_video_first_frame, curr_video_last_frame, new_results)
-
-    results2json_videoseg(dataset, new_results, './output/results.json')
+    out_file = './output/results.json'
+    if not osp.exists('./output'):
+        import os
+        os.mkdir('./output')
+    mmcv.dump(results, out_file)
     return results
 
 
@@ -157,27 +81,47 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
     dataset = data_loader.dataset
     rank, world_size = get_dist_info()
     if rank == 0:
-        prog_bar = mmcv.ProgressBar(len(dataset))
-    time.sleep(2)  # This line can prevent deadlock problem in some cases.
+        prog_bar = mmcv.ProgressBar(dataset.total_frames)
     for i, data in enumerate(data_loader):
         with torch.no_grad():
-            result = model(return_loss=False, rescale=True, **data)
-            # encode mask results
-            if isinstance(result[0], tuple):
-                result = [(bbox_results, encode_mask_results(mask_results))
-                          for bbox_results, mask_results in result]
-        results.extend(result)
+            scores, labels, masks = model(return_loss=False, rescale=True, **data)
+
+        # encode mask results
+        for score, label, mask in zip(scores, labels, masks):
+            segms = []
+            for mask_perframe in mask:
+                rle = mask_util.encode(
+                    np.array(mask_perframe[:, :, np.newaxis], order='F',
+                    dtype='uint8'))[0]  # encoded with RLE
+                rle['counts'] = rle['counts'].decode()
+                segms.append(rle)
+
+            result = {}
+            result['video_id'] = i + 1
+            result['score'] = score.item()
+# majority voting for sequence category
+            result['category_id'] = label.item() + 1
+            result['segmentations'] = segms
+
+            results.append(result)
 
         if rank == 0:
-            batch_size = len(result)
-            for _ in range(batch_size * world_size):
+            video_len = len(data['img'][0])
+            for _ in range(video_len * world_size):
                 prog_bar.update()
 
-    # collect results from all ranks
     if gpu_collect:
         results = collect_results_gpu(results, len(dataset))
     else:
         results = collect_results_cpu(results, len(dataset), tmpdir)
+
+    if rank == 0:
+        out_file = './output/results.json'
+        if not osp.exists('./output'):
+            import os
+            os.mkdir('./output')
+        mmcv.dump(results, out_file)
+
     return results
 
 

@@ -544,11 +544,7 @@ class IAICondInstHead(AnchorFreeHead):
 
         losses = self.loss(*loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore, gt_masks_list=gt_masks_list)
 
-        if proposal_cfg is None:
-            return losses
-        else:
-            proposal_list = self.get_bboxes(*outs, img_metas, cfg=proposal_cfg)
-            return losses, proposal_list
+        return losses
 
     def mask_heads_forward(self, features, weights, biases, num_instances):
         '''Mask head forward process'''
@@ -595,7 +591,7 @@ class IAICondInstHead(AnchorFreeHead):
 
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
-    def get_bboxes(self,
+    def get_results(self,
                    cls_scores,
                    id_scores,
                    bbox_preds,
@@ -646,17 +642,17 @@ class IAICondInstHead(AnchorFreeHead):
 
         # initial ID numbers for a new video
         if is_first:
-            self.curr_inst_id = [0 for i in range(len(img_metas))]
-        mask_results_list = []
+            self.curr_inst_id = [0]
 
-        max_h, max_w = 0, 0
-        for img_id in range(len(img_metas)):
-            pad_shape = img_metas[img_id]['pad_shape']
-            h, w = pad_shape[:2]
-            max_h = max(max_h, h)
-            max_w = max(max_w, w)
-        id_masks = cls_scores[0].new_zeros(len(img_metas), self.max_obj_num+1, max_h, max_w)
+        pad_shape = img_metas['pad_shape']
+        h, w = pad_shape[:2]
+        id_masks = cls_scores[0].new_zeros(1, self.max_obj_num+1, h, w)
         id_masks[:, self.max_obj_num] = 1
+
+        ori_shape = img_metas['ori_shape']
+        ori_h, ori_w = ori_shape[:2]
+        pred_masks = cls_scores[0].new_zeros(1, self.max_obj_num, ori_h, ori_w)
+        cls_scores_withid = cls_scores[0].new_zeros(1, self.max_obj_num, self.num_classes+1)
         new_inst_exists = False
 
         # get multiple level points for all featmaps from different scales
@@ -665,134 +661,119 @@ class IAICondInstHead(AnchorFreeHead):
         mlvl_points, mlvl_strides = self.get_points(featmap_sizes, bbox_preds[0].dtype,
             bbox_preds[0].device)
 
-        for img_id in range(len(img_metas)):
-            cls_score_list = [
-                cls_scores[i][img_id].detach() for i in range(num_levels)
-            ]
-            id_score_list = [
-                id_scores[i][img_id].detach() for i in range(num_levels)
-            ]
-            bbox_pred_list = [
-                bbox_preds[i][img_id].detach() for i in range(num_levels)
-            ]
-            centerness_pred_list = [
-                centernesses[i][img_id].detach() for i in range(num_levels)
-            ]
-            kernel_pred_list = [
-                kernel_preds[i][img_id].detach() for i in range(num_levels)
-            ]
-            mask_feats_i = mask_feats[img_id]
+        cls_score_list = [
+            cls_scores[i][0].detach() for i in range(num_levels)
+        ]
+        id_score_list = [
+            id_scores[i][0].detach() for i in range(num_levels)
+        ]
+        bbox_pred_list = [
+            bbox_preds[i][0].detach() for i in range(num_levels)
+        ]
+        centerness_pred_list = [
+            centernesses[i][0].detach() for i in range(num_levels)
+        ]
+        kernel_pred_list = [
+            kernel_preds[i][0].detach() for i in range(num_levels)
+        ]
+        mask_feats_i = mask_feats[0]
 
-            img_shape = img_metas[img_id]['img_shape']
-            scale_factor = img_metas[img_id]['scale_factor']
-            ori_shape = img_metas[img_id]['ori_shape']
+        img_shape = img_metas['img_shape']
+        scale_factor = img_metas['scale_factor']
+        ori_shape = img_metas['ori_shape']
 
-            # get predict bboxes, ids, classication scores, ori_masks(for output results, original image shape), det_masks(for association, input shape)
-            det_bboxes, det_id_scores, det_cls_scores, ori_masks, det_masks = self._get_bboxes_single(
-                cls_score_list,
-                id_score_list,
-                bbox_pred_list,
-                centerness_pred_list,
-                kernel_pred_list,
-                mask_feats_i,
-                mlvl_points,
-                mlvl_strides,
-                img_shape,
-                scale_factor,
-                ori_shape,
-                cfg,
-                rescale,
-                with_nms,
-                is_first=is_first)
+        # get predict bboxes, ids, classication scores, ori_masks(for output results, original image shape), det_masks(for association, input shape)
+        det_bboxes, det_id_scores, det_cls_scores, ori_masks, det_masks = self._get_results_single(
+            cls_score_list,
+            id_score_list,
+            bbox_pred_list,
+            centerness_pred_list,
+            kernel_pred_list,
+            mask_feats_i,
+            mlvl_points,
+            mlvl_strides,
+            img_shape,
+            scale_factor,
+            ori_shape,
+            cfg,
+            rescale,
+            with_nms,
+            is_first=is_first)
 
-            # remove some wrong masks (no positive area or occluded by previous masks)
-            keep = []
-            new_pad_masks = []
-            bg_mask = id_masks.new_ones((max_h, max_w), dtype=torch.bool)
-            if ori_masks is not None:
-                ori_bg_mask = id_masks.new_ones(ori_masks[0].shape, dtype=torch.bool)
-                new_ori_masks = []
+        # remove some wrong masks (no positive area or occluded by previous masks)
+        keep = []
+        new_pad_masks = []
+        bg_mask = id_masks.new_ones((h, w), dtype=torch.bool)
+        if ori_masks is not None:
+            ori_bg_mask = id_masks.new_ones(ori_masks[0].shape, dtype=torch.bool)
+            new_ori_masks = []
 
-            for i in range(len(det_bboxes)):
-                mask = det_masks[i].bool()
-                pad = (0, max_w - mask.shape[1], 0, max_h - mask.shape[0])
-                pad_mask = F.pad(mask, pad, value=0)
-                new_pad_mask = bg_mask & pad_mask
-                bg_mask[new_pad_mask] = 0
-                area = pad_mask.sum()
-                if (area == 0) or float(new_pad_mask.sum()) / float(area) < 0.1:
-                    continue
-                keep.append(i)
-                new_pad_masks.append(new_pad_mask)
-
-                if ori_masks is not None:
-                    new_ori_mask = ori_bg_mask & ori_masks[i].bool()
-                    ori_bg_mask[new_ori_mask] = 0
-                    new_ori_masks.append(new_ori_mask)
-
-            if len(keep) > 0:
-                det_bboxes = det_bboxes[keep]
-                det_id_scores = det_id_scores[keep]
-                if ori_masks is not None:
-                    ori_masks = ori_masks[keep]
-                det_cls_scores = det_cls_scores[keep]
-
-            # hungarian algorithm to assign unique ID for each instance
-            from scipy.optimize import linear_sum_assignment
-            if is_first:
-                det_ids = det_id_scores.new_ones(det_bboxes.shape[0]) * (self.max_obj_num - 1)
-            else:
-                if len(det_id_scores) > 0:
-                    new_id_scores = det_id_scores[:, self.max_obj_num-1].repeat(len(det_id_scores)-1,1)
-                    id_scores_matrix = -torch.cat((det_id_scores.transpose(0,1), new_id_scores)).transpose(0,1).cpu()
-                    row_ind, col_ind = linear_sum_assignment(id_scores_matrix)
-                    det_ids = col_ind
-
-            # combine ID with masks to generate ID masks
-            det_obj_ids = []
-            cls_scores_dict = {}
-            curr_max_id = self.curr_inst_id[img_id]
-            for i in range(len(keep)):
-                id_pred = det_ids[i].item()
-                new_pad_mask = new_pad_masks[i]
-
-                # in first frame or in the following frames new instance exists
-                if (is_first) or (id_pred >= curr_max_id):
-                    new_inst_exists = True
-                    id_pred = self.curr_inst_id[img_id]
-                    self.curr_inst_id[img_id] += 1
-                    # if instance ID number surpass the maximum object numbers, ignore this object
-                    if self.curr_inst_id[img_id] > self.max_obj_num-2:
-                        self.curr_inst_id[img_id] = self.max_obj_num-2
-
-                if id_pred in det_obj_ids:
-                    id_pred = self.curr_inst_id[img_id]
-                    self.curr_inst_id[img_id] += 1
-                    if self.curr_inst_id[img_id] > self.max_obj_num-2:
-                        self.curr_inst_id[img_id] = self.max_obj_num-2
-
-                det_obj_ids.append(id_pred)
-                cls_scores_dict[id_pred] = det_cls_scores[i]
-                id_masks[img_id][id_pred] = new_pad_mask
-                id_masks[img_id][self.max_obj_num][new_pad_mask] = 0
-
-            if len(keep) == 0:
-                bbox_results = {}
-                mask_results_list.append({})
+        for i in range(len(det_bboxes)):
+            mask = det_masks[i].bool()
+            pad = (0, w - mask.shape[1], 0, h - mask.shape[0])
+            pad_mask = F.pad(mask, pad, value=0)
+            new_pad_mask = bg_mask & pad_mask
+            bg_mask[new_pad_mask] = 0
+            area = pad_mask.sum()
+            if (area == 0) or float(new_pad_mask.sum()) / float(area) < 0.1:
                 continue
+            keep.append(i)
+            new_pad_masks.append(new_pad_mask)
 
-            bbox_results = bbox2result_with_id(det_bboxes, det_bboxes.new_ones(det_bboxes.size(0)), det_obj_ids)
+            if ori_masks is not None:
+                new_ori_mask = ori_bg_mask & ori_masks[i].bool()
+                ori_bg_mask[new_ori_mask] = 0
+                new_ori_masks.append(new_ori_mask)
 
-            mask_results = {}
-            for i in range(len(keep)):
-                id_pred = det_obj_ids[i]
-                mask = new_ori_masks[i].bool().cpu().numpy()
-                mask_results[id_pred] = mask
-            mask_results_list.append(mask_results)
+        if len(keep) > 0:
+            det_bboxes = det_bboxes[keep]
+            det_id_scores = det_id_scores[keep]
+            if ori_masks is not None:
+                ori_masks = ori_masks[keep]
+            det_cls_scores = det_cls_scores[keep]
 
-        return bbox_results, mask_results_list, id_masks, new_inst_exists, cls_scores_dict
+        # hungarian algorithm to assign unique ID for each instance
+        from scipy.optimize import linear_sum_assignment
+        if is_first:
+            det_ids = det_id_scores.new_ones(det_bboxes.shape[0]) * (self.max_obj_num - 1)
+        else:
+            if len(det_id_scores) > 0:
+                new_id_scores = det_id_scores[:, self.max_obj_num-1].repeat(len(det_id_scores)-1,1)
+                id_scores_matrix = -torch.cat((det_id_scores.transpose(0,1), new_id_scores)).transpose(0,1).cpu()
+                row_ind, col_ind = linear_sum_assignment(id_scores_matrix)
+                det_ids = col_ind
 
-    def _get_bboxes_single(self,
+        # combine ID with masks to generate ID masks
+        det_obj_ids = []
+        curr_max_id = self.curr_inst_id[0]
+        for i in range(len(keep)):
+            id_pred = det_ids[i].item()
+            new_pad_mask = new_pad_masks[i]
+
+            # in first frame or in the following frames new instance exists
+            if (is_first) or (id_pred >= curr_max_id):
+                new_inst_exists = True
+                id_pred = self.curr_inst_id[0]
+                self.curr_inst_id[0] += 1
+                # if instance ID number surpass the maximum object numbers, ignore this object
+                if self.curr_inst_id[0] > self.max_obj_num-2:
+                    self.curr_inst_id[0] = self.max_obj_num-2
+
+            if id_pred in det_obj_ids:
+                id_pred = self.curr_inst_id[0]
+                self.curr_inst_id[0] += 1
+                if self.curr_inst_id[0] > self.max_obj_num-2:
+                    self.curr_inst_id[0] = self.max_obj_num-2
+
+            det_obj_ids.append(id_pred)
+            cls_scores_withid[0][id_pred] = det_cls_scores[i]
+            id_masks[0][id_pred] = new_pad_mask
+            id_masks[0][self.max_obj_num][new_pad_mask] = 0
+            pred_masks[0][id_pred] = new_ori_masks[i]
+
+        return pred_masks, id_masks, new_inst_exists, cls_scores_withid
+
+    def _get_results_single(self,
                            cls_scores,
                            id_scores,
                            bbox_preds,
@@ -1138,6 +1119,9 @@ class IAICondInstHead(AnchorFreeHead):
         strides = points[:,0] * 0 + stride
         return points, strides
 
+    def get_bboxes(self):
+        return None
+
     def simple_test(self, x, img_metas, rescale=False, is_first=False):
         """IAICondInstHead test without augmentation.
         Args:
@@ -1155,8 +1139,6 @@ class IAICondInstHead(AnchorFreeHead):
             is_end : whether this frame is the last image of the whole dataset
 
         Returns:
-            bbox_results : a dict of bbox results
-
             segm_results : a dict of segmentation results
 
             id_masks : one hot ID masks, is used to create ID embedding
@@ -1168,6 +1150,6 @@ class IAICondInstHead(AnchorFreeHead):
         outputs = self(x)
         bbox_inputs = outputs + (img_metas, self.test_cfg, rescale)
 
-        bbox_results, segm_results, id_masks, new_inst_exists, cls_scores_dict = self.get_bboxes(*bbox_inputs, is_first=is_first)
+        pred_masks, id_masks, new_inst_exists, cls_scores_withid = self.get_results(*bbox_inputs, is_first=is_first)
 
-        return [(bbox_results, segm_results)], id_masks, new_inst_exists, cls_scores_dict
+        return pred_masks, id_masks, new_inst_exists, cls_scores_withid

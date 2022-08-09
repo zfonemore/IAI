@@ -46,7 +46,6 @@ class IAICondInst(SingleStageDetector):
         # project backbone features for preserving classification features
         self.backbone_projector = nn.Conv2d(
             2048, 1536, kernel_size=1)
-        self.cls_scores = {}
 
     def extract_feat(self, img):
         """Directly extract features from the backbone."""
@@ -219,64 +218,67 @@ class IAICondInst(SingleStageDetector):
         """
 
         assert self.with_bbox, 'Bbox head must be implemented.'
-        feats = self.extract_feat(img)
-        is_first = img_metas[0]['is_first']
+        feats_video = self.extract_feat(img)
+        feats_per_frame = split_frames(feats_video, 1)
 
-        if is_first:
-            # average classification scores for the last video
-            import copy
-            return_cls_scores = copy.deepcopy(self.cls_scores)
-            for key, val in return_cls_scores.items():
-                return_cls_scores[key] = val / self.cls_scores_num[key]
-            self.cls_scores = {}
-            self.cls_scores_num = {}
-            self.lstt.restart(batch_size=1, enable_id_shuffle=False)
-            h, w = img.size()[2:]
-            prev_one_hot_masks = img.new_zeros(1, self.max_obj_num+1, h, w)
-        else:
-            return_cls_scores = None
-            prev_one_hot_masks = self.pred_masks
+        cls_scores_list = []
+        pred_masks_list = []
 
-        # use lstt to combine backbone features & ID embedding
-        new_feat = self.encoder_projector(feats[-1])
-        new_feats = (feats[0], feats[1], feats[2], new_feat)
-        lstt_embs = self.lstt(new_feats, prev_one_hot_masks, self.new_inst_exist)
-        embs = [new_feats[-1]]
-        n, c, h, w = new_feats[-1].size()
-        for emb in lstt_embs:
-            embs.append(emb.view(h, w, n, c).permute(2, 3, 0, 1))
-        backbone_cls_feat = self.backbone_projector(feats[-1])
-        embs.append(backbone_cls_feat)
-        embs = torch.cat(embs, dim=1)
-        lstt_feats = (feats[0], feats[1], feats[2], embs)
+        for frame_idx, feats in enumerate(feats_per_frame):
+            is_first = (frame_idx == 0)
 
-        enc_feats = self.neck(lstt_feats)
+            if is_first:
+                # average classification scores for the last video
+                self.lstt.restart(batch_size=1, enable_id_shuffle=False)
+                h, w = img.size()[2:]
+                prev_one_hot_masks = img.new_zeros(1, self.max_obj_num+1, h, w)
+            else:
+                prev_one_hot_masks = id_masks
 
-        results, self.pred_masks, self.new_inst_exist, cls_scores = \
-            self.bbox_head.simple_test(enc_feats, img_metas, rescale=rescale,
-                                    is_first=is_first)
+            # use lstt to combine backbone features & ID embedding
+            new_feat = self.encoder_projector(feats[-1])
+            new_feats = (feats[0], feats[1], feats[2], new_feat)
+            lstt_embs = self.lstt(new_feats, prev_one_hot_masks, self.new_inst_exist)
+            embs = [new_feats[-1]]
+            n, c, h, w = new_feats[-1].size()
+            for emb in lstt_embs:
+                embs.append(emb.view(h, w, n, c).permute(2, 3, 0, 1))
+            backbone_cls_feat = self.backbone_projector(feats[-1])
+            embs.append(backbone_cls_feat)
+            embs = torch.cat(embs, dim=1)
+            lstt_feats = (feats[0], feats[1], feats[2], embs)
 
-        # update local memory & global memory
-        # for first frame there is not previous memory, so reset memory
-        if is_first:
-            self.lstt.reset_memory(self.pred_masks)
-        else:
-            self.lstt.update_short_term_memory(self.pred_masks, self.new_inst_exist)
+            enc_feats = self.neck(lstt_feats)
 
-        if cls_scores is not None:
-            for obj_id, cls_score in cls_scores.items():
-                if obj_id in self.cls_scores:
-                    self.cls_scores[obj_id] += cls_score
-                    self.cls_scores_num[obj_id] += 1
-                else:
-                    self.cls_scores[obj_id] = cls_score
-                    self.cls_scores_num[obj_id] = 1
+            pred_masks, id_masks, new_inst_exist, cls_scores = \
+                self.bbox_head.simple_test(enc_feats, img_metas[0], rescale=rescale,
+                                        is_first=is_first)
 
-        # if is the last image of the whole dataset, average classification scores for the current video
-        if is_end:
-            import copy
-            return_cls_scores = copy.deepcopy(self.cls_scores)
-            for key, val in return_cls_scores.items():
-                return_cls_scores[key] = val / self.cls_scores_num[key]
+            cls_scores_list.append(cls_scores)
+            pred_masks_list.append(pred_masks)
+            # update local memory & global memory
+            # In the first frame there is no previous memory, so reset memory
+            if is_first:
+                self.lstt.reset_memory(id_masks)
+            else:
+                self.lstt.update_short_term_memory(id_masks, new_inst_exist)
 
-        return results, return_cls_scores
+        results = []
+        cls_scores_list = torch.cat(cls_scores_list)
+        pred_masks_list = torch.cat(pred_masks_list)
+        num_classes = cls_scores_list.shape[-1]
+
+        cls_scores_mean = torch.mean(cls_scores_list, dim=0).flatten(0)
+        cls_scores_topk, idx_topk = torch.topk(cls_scores_mean, 10)
+
+        score_thr = 0.05
+        keep = cls_scores_topk > score_thr
+        idx_topk = idx_topk[keep]
+        cls_scores_topk = cls_scores_topk[keep]
+
+        obj_idx = idx_topk // num_classes
+        pred_labels = idx_topk % num_classes
+
+        pred_masks_list = pred_masks_list[:, obj_idx].transpose(0,1).bool().cpu().numpy()
+
+        return cls_scores_topk, pred_labels, pred_masks_list

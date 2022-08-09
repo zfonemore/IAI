@@ -13,12 +13,14 @@ from .pipelines import Compose
 
 @DATASETS.register_module()
 class YTVOSDataset(CustomDataset):
+
     CLASSES=('person','giant_panda','lizard','parrot','skateboard','sedan',
         'ape','dog','snake','monkey','hand','rabbit','duck','cat','cow','fish',
         'train','horse','turtle','bear','motorbike','giraffe','leopard',
         'fox','deer','owl','surfboard','airplane','truck','zebra','tiger',
         'elephant','snowboard','boat','shark','mouse','frog','eagle','earless_seal',
         'tennis_racket')
+
     YTVIS2021_CLASSES=('airplane', 'bear', 'bird', 'boat', 'car', 'cat', 'cow',
         'deer', 'dog', 'duck', 'earless_seal', 'elephant', 'fish',
         'flying_disc', 'fox', 'frog', 'giant_panda', 'giraffe',
@@ -26,7 +28,6 @@ class YTVOSDataset(CustomDataset):
         "parrot", "person", "rabbit", "shark", "skateboard", "snake",
         "snowboard", "squirrel", "surfboard", "tennis_racket", "tiger",
         "train", "truck", "turtle", "whale", "zebra")
-
 
     def __init__(self,
                  ann_file,
@@ -47,12 +48,21 @@ class YTVOSDataset(CustomDataset):
         self.img_prefix = img_prefix
         self.seg_prefix = seg_prefix
 
+        self.total_frames = 0
         # load annotations (and proposals)
         img_ids = []
         self.vid_infos = self.load_annotations(ann_file)
         for idx, vid_info in enumerate(self.vid_infos):
-          for frame_id in range(len(vid_info['filenames'])):
-            img_ids.append((idx, frame_id))
+            if test_mode:
+                img_ids_pervideo = []
+            for frame_id in range(len(vid_info['filenames'])):
+                if test_mode:
+                    img_ids_pervideo.append((idx, frame_id))
+                else:
+                    img_ids.append((idx, frame_id))
+                self.total_frames += 1
+            if test_mode:
+                img_ids.append(img_ids_pervideo)
 
         self.img_ids = img_ids
         self.proposal_file = proposal_file
@@ -230,7 +240,6 @@ class YTVOSDataset(CustomDataset):
 
         # obj ids attribute does not exist in current annotation, need to add it
         ann = self.get_ann_info(vid, frame_id)
-        ann['seg_map'] = vid_info['filenames'][frame_id].replace('jpg', 'png')
         obj_ids = ann['obj_ids']
         obj_nums = len(obj_ids)
 
@@ -247,23 +256,23 @@ class YTVOSDataset(CustomDataset):
 
         return results_processed, obj_ids, obj_nums
 
-    def prepare_test_img(self, idx):
+    def prepare_test_img(self, idx_pervideo):
         """Prepare an image for testing (multi-scale and flipping)"""
-        vid,  frame_id = idx
+        results_pervideo = []
+        vid, _ = idx_pervideo[0]
         vid_info = self.vid_infos[vid]
+        for vid, frame_id in idx_pervideo:
 
-        vid_info['filename'] = vid_info['filenames'][frame_id]
-        vid_info['file_name'] = vid_info['filenames'][frame_id]
+            vid_info['filename'] = vid_info['filenames'][frame_id]
+            vid_info['file_name'] = vid_info['filenames'][frame_id]
 
-        results = dict(img_info=vid_info)
+            results = dict(img_info=vid_info)
 
-        self.pre_pipeline(results)
-        results_processed = self.pipeline(results)
+            self.pre_pipeline(results)
+            results_processed = self.pipeline(results)
+            results_pervideo.append(results_processed)
 
-        results_processed['img_metas'][0].data['is_first'] = (frame_id == 0)
-        results_processed['img_metas'][0].data['is_first'] = (frame_id == 0)
-
-        return results_processed
+        return results_pervideo
 
     def _parse_ann_info(self, ann_info, frame_id, with_mask=True):
         """Parse bbox and mask annotation.
