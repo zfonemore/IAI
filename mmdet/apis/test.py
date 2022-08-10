@@ -26,6 +26,7 @@ def single_gpu_test(model,
         with torch.no_grad():
             scores, labels, masks = model(return_loss=False, rescale=True, **data)
 
+        video_id = data['img_metas'][0]._data[0][0]['vid']
         # encode mask results
         for score, label, mask in zip(scores, labels, masks):
             segms = []
@@ -37,9 +38,8 @@ def single_gpu_test(model,
                 segms.append(rle)
 
             result = {}
-            result['video_id'] = i + 1
+            result['video_id'] = video_id
             result['score'] = score.item()
-# majority voting for sequence category
             result['category_id'] = label.item() + 1
             result['segmentations'] = segms
 
@@ -86,6 +86,7 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
         with torch.no_grad():
             scores, labels, masks = model(return_loss=False, rescale=True, **data)
 
+        video_id = data['img_metas'][0]._data[0][0]['vid']
         # encode mask results
         for score, label, mask in zip(scores, labels, masks):
             segms = []
@@ -97,9 +98,8 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
                 segms.append(rle)
 
             result = {}
-            result['video_id'] = i + 1
+            result['video_id'] = video_id
             result['score'] = score.item()
-# majority voting for sequence category
             result['category_id'] = label.item() + 1
             result['segmentations'] = segms
 
@@ -110,10 +110,7 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
             for _ in range(video_len * world_size):
                 prog_bar.update()
 
-    if gpu_collect:
-        results = collect_results_gpu(results, len(dataset))
-    else:
-        results = collect_results_cpu(results, len(dataset), tmpdir)
+    results = collect_results_gpu(results, len(results))
 
     if rank == 0:
         out_file = './output/results.json'
@@ -167,7 +164,6 @@ def collect_results_cpu(result_part, size, tmpdir=None):
         shutil.rmtree(tmpdir)
         return ordered_results
 
-
 def collect_results_gpu(result_part, size):
     rank, world_size = get_dist_info()
     # dump result part to tensor with pickle
@@ -194,8 +190,6 @@ def collect_results_gpu(result_part, size):
                 pickle.loads(recv[:shape[0]].cpu().numpy().tobytes()))
         # sort the results
         ordered_results = []
-        for res in zip(*part_list):
+        for res in part_list:
             ordered_results.extend(list(res))
-        # the dataloader may pad some samples
-        ordered_results = ordered_results[:size]
         return ordered_results

@@ -244,7 +244,6 @@ class YTVOSDataset(CustomDataset):
         obj_nums = len(obj_ids)
 
         vid_info['filename'] = vid_info['filenames'][frame_id]
-        vid_info['file_name'] = vid_info['filenames'][frame_id]
 
         results = dict(img_info=vid_info, ann_info=ann)
 
@@ -264,10 +263,10 @@ class YTVOSDataset(CustomDataset):
         for vid, frame_id in idx_pervideo:
 
             vid_info['filename'] = vid_info['filenames'][frame_id]
-            vid_info['file_name'] = vid_info['filenames'][frame_id]
 
             results = dict(img_info=vid_info)
 
+            results['vid'] = vid + 1
             self.pre_pipeline(results)
             results_processed = self.pipeline(results)
             results_pervideo.append(results_processed)
