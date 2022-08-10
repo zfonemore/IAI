@@ -247,6 +247,7 @@ class YTVOSDataset(CustomDataset):
 
         results = dict(img_info=vid_info, ann_info=ann)
 
+        results['vid'] = vid + 1
         self.pre_pipeline(results)
         # sync scale for multiple gpus training
         if scale is not None:
