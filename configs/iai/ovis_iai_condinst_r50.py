@@ -1,6 +1,6 @@
 # model settings
-batch_size = 4
-max_obj_num = 20
+batch_size = 2
+max_obj_num = 25
 model = dict(
     type='IAICondInst',
     pretrained='torchvision://resnet50',
@@ -34,7 +34,7 @@ model = dict(
         global_mem_interval=5),
     bbox_head=dict(
         type='IAICondInstHead',
-        num_classes=40,
+        num_classes=25,
         max_obj_num=max_obj_num,
         in_channels=256,
         stacked_convs=4,
@@ -75,7 +75,7 @@ model = dict(
         id_score_thr=0.1,
         cls_score_thr=0.1,
         nms=dict(type='nms', iou_threshold=0.5),
-        max_per_img=10))
+        max_per_img=100))
 # dataset settings
 dataset_type = 'YTVOSDataset'
 data_root = 'data/ovis/'
@@ -140,7 +140,6 @@ data = dict(
 optimizer = dict(
     type='AdamW',
     lr=0.0001,
-    #lr=0.00005,
     weight_decay=0.0001,
     paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.1, decay_mult=0.9)}))
 optimizer_config = dict(grad_clip=None)
