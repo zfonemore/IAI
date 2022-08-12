@@ -29,19 +29,11 @@ def single_gpu_test(model,
         video_id = data['img_metas'][0]._data[0][0]['vid']
         # encode mask results
         for score, label, mask in zip(scores, labels, masks):
-            segms = []
-            for mask_perframe in mask:
-                rle = mask_util.encode(
-                    np.array(mask_perframe[:, :, np.newaxis], order='F',
-                    dtype='uint8'))[0]  # encoded with RLE
-                rle['counts'] = rle['counts'].decode()
-                segms.append(rle)
-
             result = {}
             result['video_id'] = video_id
             result['score'] = score.item()
             result['category_id'] = label.item() + 1
-            result['segmentations'] = segms
+            result['segmentations'] = mask
 
             results.append(result)
 
@@ -89,19 +81,11 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
         video_id = data['img_metas'][0]._data[0][0]['vid']
         # encode mask results
         for score, label, mask in zip(scores, labels, masks):
-            segms = []
-            for mask_perframe in mask:
-                rle = mask_util.encode(
-                    np.array(mask_perframe[:, :, np.newaxis], order='F',
-                    dtype='uint8'))[0]  # encoded with RLE
-                rle['counts'] = rle['counts'].decode()
-                segms.append(rle)
-
             result = {}
             result['video_id'] = video_id
             result['score'] = score.item()
             result['category_id'] = label.item() + 1
-            result['segmentations'] = segms
+            result['segmentations'] = mask
 
             results.append(result)
 

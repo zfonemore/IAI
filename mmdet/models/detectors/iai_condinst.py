@@ -6,6 +6,8 @@ from mmdet.core import bbox2roi
 from ..builder import DETECTORS, build_head, build_neck, build_roi_extractor, build_loss
 from .single_stage import SingleStageDetector
 from .utils import split_frames, process_id, get_new_masks, aligned_bilinear
+import pycocotools.mask as mask_util
+import numpy as np
 
 
 @DETECTORS.register_module()
@@ -223,6 +225,7 @@ class IAICondInst(SingleStageDetector):
 
         cls_scores_list = []
         pred_masks_list = []
+        encode_masks = [[] for i in range(20)]
 
         for frame_idx, feats in enumerate(feats_per_frame):
             is_first = (frame_idx == 0)
@@ -254,8 +257,16 @@ class IAICondInst(SingleStageDetector):
                 self.bbox_head.simple_test(enc_feats, img_metas[0], rescale=rescale,
                                         is_first=is_first)
 
+            pred_masks = pred_masks.squeeze(0)
+            for idx, mask in enumerate(pred_masks):
+                rle = mask_util.encode(
+                        np.array(mask.bool().cpu().numpy()[:, :, np.newaxis], order='F',
+                        dtype='uint8'))[0] # encoded with RLE
+                rle['counts'] = rle['counts'].decode()
+
+                encode_masks[idx].append(rle)
+
             cls_scores_list.append(cls_scores)
-            pred_masks_list.append(pred_masks)
             # update local memory & global memory
             # In the first frame there is no previous memory, so reset memory
             if is_first:
@@ -265,7 +276,6 @@ class IAICondInst(SingleStageDetector):
 
         results = []
         cls_scores_list = torch.cat(cls_scores_list)
-        pred_masks_list = torch.cat(pred_masks_list)
         num_classes = cls_scores_list.shape[-1]
 
         cls_scores_mean = torch.mean(cls_scores_list, dim=0).flatten(0)
@@ -276,9 +286,11 @@ class IAICondInst(SingleStageDetector):
         idx_topk = idx_topk[keep]
         cls_scores_topk = cls_scores_topk[keep]
 
-        obj_idx = idx_topk // num_classes
+        obj_idxes = idx_topk // num_classes
         pred_labels = idx_topk % num_classes
 
-        pred_masks_list = pred_masks_list[:, obj_idx].transpose(0,1).bool().cpu().numpy()
+        pred_masks = []
+        for obj_idx in obj_idxes:
+            pred_masks.append(encode_masks[obj_idx])
 
-        return cls_scores_topk, pred_labels, pred_masks_list
+        return cls_scores_topk, pred_labels, pred_masks
