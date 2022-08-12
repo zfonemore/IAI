@@ -13,7 +13,7 @@
 
 |      Name    | Backbone | Pretrain | AP   | AP50 | AP75 | AR1  | AR10 | Model |
 | -------------| -------- | -------- | ---- | ---- | ---- | ---- | ---- | ----- |
-| IAI+CondInst |   R50    | COCO | 37.7 | 58.0 | 42.3 | 34.6 | 45.6 | gdrive |
+| IAI+CondInst |   R50    | COCO | 38.0 | 59.1 | 43.0 | 34.8 | 44.5 | [gdrive](https://drive.google.com/file/d/1No6TwmpVuC57ihiOMujNqut7BJFt7UbH/view?usp=sharing) |
 
 #### OVIS
 
