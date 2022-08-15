@@ -642,7 +642,7 @@ class IAICondInstHead(AnchorFreeHead):
 
         # initial ID numbers for a new video
         if is_first:
-            self.curr_inst_id = [0]
+            self.curr_inst_id = 0
 
         pad_shape = img_metas['pad_shape']
         h, w = pad_shape[:2]
@@ -745,7 +745,7 @@ class IAICondInstHead(AnchorFreeHead):
 
         # combine ID with masks to generate ID masks
         det_obj_ids = []
-        curr_max_id = self.curr_inst_id[0]
+        curr_max_id = self.curr_inst_id
         for i in range(len(keep)):
             id_pred = det_ids[i].item()
             new_pad_mask = new_pad_masks[i]
@@ -753,17 +753,17 @@ class IAICondInstHead(AnchorFreeHead):
             # in first frame or in the following frames new instance exists
             if (is_first) or (id_pred >= curr_max_id):
                 new_inst_exists = True
-                id_pred = self.curr_inst_id[0]
-                self.curr_inst_id[0] += 1
+                id_pred = self.curr_inst_id
+                self.curr_inst_id += 1
                 # if instance ID number surpass the maximum object numbers, ignore this object
-                if self.curr_inst_id[0] > self.max_obj_num-2:
-                    self.curr_inst_id[0] = self.max_obj_num-2
+                if self.curr_inst_id > self.max_obj_num-2:
+                    self.curr_inst_id = self.max_obj_num-2
 
             if id_pred in det_obj_ids:
-                id_pred = self.curr_inst_id[0]
-                self.curr_inst_id[0] += 1
-                if self.curr_inst_id[0] > self.max_obj_num-2:
-                    self.curr_inst_id[0] = self.max_obj_num-2
+                id_pred = self.curr_inst_id
+                self.curr_inst_id += 1
+                if self.curr_inst_id > self.max_obj_num-2:
+                    self.curr_inst_id = self.max_obj_num-2
 
             det_obj_ids.append(id_pred)
             cls_scores_withid[0][id_pred] = det_cls_scores[i]
@@ -771,7 +771,7 @@ class IAICondInstHead(AnchorFreeHead):
             id_masks[0][self.max_obj_num][new_pad_mask] = 0
             pred_masks[0][id_pred] = new_ori_masks[i]
 
-        return pred_masks, id_masks, new_inst_exists, cls_scores_withid
+        return pred_masks, id_masks, new_inst_exists, cls_scores_withid, self.curr_inst_id
 
     def _get_results_single(self,
                            cls_scores,
@@ -1150,6 +1150,6 @@ class IAICondInstHead(AnchorFreeHead):
         outputs = self(x)
         bbox_inputs = outputs + (img_metas, self.test_cfg, rescale)
 
-        pred_masks, id_masks, new_inst_exists, cls_scores_withid = self.get_results(*bbox_inputs, is_first=is_first)
+        pred_masks, id_masks, new_inst_exists, cls_scores_withid, max_inst_id = self.get_results(*bbox_inputs, is_first=is_first)
 
-        return pred_masks, id_masks, new_inst_exists, cls_scores_withid
+        return pred_masks, id_masks, new_inst_exists, cls_scores_withid, max_inst_id
