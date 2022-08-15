@@ -31,7 +31,7 @@ model = dict(
         feat_channels=256,
         self_heads=4,
         attn_heads=2,
-        global_mem_interval=5),
+        global_mem_interval=3),
     bbox_head=dict(
         type='IAICondInstHead',
         num_classes=40,
@@ -140,7 +140,6 @@ data = dict(
 optimizer = dict(
     type='AdamW',
     lr=0.0001,
-    #lr=0.00005,
     weight_decay=0.0001,
     paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.1, decay_mult=0.9)}))
 optimizer_config = dict(grad_clip=None)

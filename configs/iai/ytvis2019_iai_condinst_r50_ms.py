@@ -73,7 +73,7 @@ model = dict(
         nms_pre=200,
         min_bbox_size=0,
         id_score_thr=0.1,
-        cls_score_thr=0.05,
+        cls_score_thr=0.1,
         nms=dict(type='nms', iou_threshold=0.5),
         max_per_img=10))
 # dataset settings
@@ -140,7 +140,6 @@ data = dict(
 optimizer = dict(
     type='AdamW',
     lr=0.0001,
-    #lr=0.00005,
     weight_decay=0.0001,
     paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.1, decay_mult=0.9)}))
 optimizer_config = dict(grad_clip=None)

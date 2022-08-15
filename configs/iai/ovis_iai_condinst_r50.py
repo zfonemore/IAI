@@ -31,7 +31,7 @@ model = dict(
         feat_channels=256,
         self_heads=4,
         attn_heads=2,
-        global_mem_interval=5),
+        global_mem_interval=3),
     bbox_head=dict(
         type='IAICondInstHead',
         num_classes=25,
@@ -75,7 +75,7 @@ model = dict(
         id_score_thr=0.1,
         cls_score_thr=0.1,
         nms=dict(type='nms', iou_threshold=0.5),
-        max_per_img=100))
+        max_per_img=50))
 # dataset settings
 dataset_type = 'YTVOSDataset'
 data_root = 'data/ovis/'
@@ -84,7 +84,7 @@ img_norm_cfg = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations', with_bbox=True, with_mask=True, with_id=True),
-    dict(type='Resize', img_scale=(640, 360), keep_ratio=True),
+    dict(type='Resize', img_scale=[(649, 360), (960, 480)], keep_ratio=True),
     dict(type='RandomFlip', flip_ratio=0.5),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),

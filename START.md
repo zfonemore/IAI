@@ -4,10 +4,11 @@
 
 #### YTVIS2019
 
-|      Name    | Backbone | Pretrain | AP   | AP50 | AP75 | AR1  | AR10 | Model |
-| -------------| -------- | -------- | ---- | ---- | ---- | ---- | ---- | ----- |
-| IAI+CondInst |   R50    | [COCO](https://drive.google.com/file/d/15w9jpvK8I5GrHYKWI8VOnmkc_gBU7aa2/view?usp=sharing) | 39.2 | 61.3 | 43.5 | 39.2 | 46.5 | [gdrive](https://drive.google.com/file/d/1v6DJKjoiBvwO0jAR3fNTLfnpAP4ZaEh8/view?usp=sharing) |
-| IAI+CondInst |   R101   | [COCO](https://drive.google.com/file/d/1Tfg__rlo9VlMQWtIHPqvHzFwASPVb3U-/view?usp=sharing) | 43.4 | 66.6 | 49.0 | 41.7 | 49.7 | [gdrive](https://drive.google.com/file/d/18tKT_b37CPaZL6AMaA5_sfOSzTnNxzsk/view?usp=sharing) |
+|      Name    | Backbone | Aug | Pretrain | AP   | AP50 | AP75 | AR1  | AR10 | Model |
+| -------------| -------- | --- |-------- | ---- | ---- | ---- | ---- | ---- | ----- |
+| [IAI+CondInst](configs/iai/ytvis2019_iai_condinst_r50.py) |   R50    |     | [COCO](https://drive.google.com/file/d/15w9jpvK8I5GrHYKWI8VOnmkc_gBU7aa2/view?usp=sharing) | 39.2 | 61.3 | 43.5 | 39.2 | 46.5 | [gdrive](https://drive.google.com/file/d/1v6DJKjoiBvwO0jAR3fNTLfnpAP4ZaEh8/view?usp=sharing) |
+| IAI+CondInst |   R50    | ms  | [COCO](https://drive.google.com/file/d/15w9jpvK8I5GrHYKWI8VOnmkc_gBU7aa2/view?usp=sharing) | 39.9 | 62.3 | 43.9 | 40.1 | 46.8 | [gdrive](https://drive.google.com/file/d/1oUD7jdiwpe_BNvxfO6DzMOq0A-exHAFS/view?usp=sharing) |
+| IAI+CondInst |   R101   | ms  | [COCO](https://drive.google.com/file/d/1Tfg__rlo9VlMQWtIHPqvHzFwASPVb3U-/view?usp=sharing) | 43.4 | 66.6 | 49.0 | 41.7 | 49.7 | [gdrive](https://drive.google.com/file/d/18tKT_b37CPaZL6AMaA5_sfOSzTnNxzsk/view?usp=sharing) |
 
 #### YTVIS2021
 
@@ -19,7 +20,7 @@
 
 |      Name    | Backbone | Pretrain | AP   | AP50 | AP75 | AR1  | AR10 | Model |
 | -------------| -------- | -------- | ---- | ---- | ---- | ---- | ---- | ----- |
-| IAI+CondInst |   R50    | COCO+YTVIS2019 | 20.3 | 39.5 | 19.0 | 11.9 | 26.2 | gdrive |
+| IAI+CondInst |   R50    | [COCO+YTVIS2019](https://drive.google.com/file/d/1v6DJKjoiBvwO0jAR3fNTLfnpAP4ZaEh8/view?usp=sharing) | 20.6 | 38.9 | 20.3 | 11.9 | 25.8 | [gdrive](https://drive.google.com/file/d/19KsMfkXfQdEHIefi5JpqW2LTJx3M2uAl/view?usp=sharing) |
 
 
 ### Training

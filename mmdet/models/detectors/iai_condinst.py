@@ -38,6 +38,7 @@ class IAICondInst(SingleStageDetector):
         self.batch_size = id_cfg.batch_size
         self.max_obj_num = id_cfg.max_obj_num
         self.new_inst_exist = False
+        self.max_per_img = test_cfg.max_per_img
 
         # lstt block for implementing association module
         self.lstt = build_head(lstt_block)
@@ -225,7 +226,7 @@ class IAICondInst(SingleStageDetector):
 
         cls_scores_list = []
         pred_masks_list = []
-        encode_masks = [[] for i in range(20)]
+        encode_masks = [[] for i in range(self.max_obj_num)]
 
         for frame_idx, feats in enumerate(feats_per_frame):
             is_first = (frame_idx == 0)
@@ -253,18 +254,23 @@ class IAICondInst(SingleStageDetector):
 
             enc_feats = self.neck(lstt_feats)
 
-            pred_masks, id_masks, new_inst_exist, cls_scores = \
+            pred_masks, id_masks, new_inst_exist, cls_scores, max_inst_id = \
                 self.bbox_head.simple_test(enc_feats, img_metas[0], rescale=rescale,
                                         is_first=is_first)
 
-            pred_masks = pred_masks.squeeze(0)
-            for idx, mask in enumerate(pred_masks):
-                rle = mask_util.encode(
-                        np.array(mask.bool().cpu().numpy()[:, :, np.newaxis], order='F',
-                        dtype='uint8'))[0] # encoded with RLE
-                rle['counts'] = rle['counts'].decode()
+            pred_masks = pred_masks.squeeze(0)[:max_inst_id]
 
-                encode_masks[idx].append(rle)
+            for idx in range(self.max_obj_num):
+                if idx < max_inst_id:
+                    mask = pred_masks[idx]
+                    rle = mask_util.encode(
+                            np.array(mask.bool().cpu().numpy()[:, :, np.newaxis], order='F',
+                            dtype='uint8'))[0] # encoded with RLE
+                    rle['counts'] = rle['counts'].decode()
+
+                    encode_masks[idx].append(rle)
+                else:
+                    encode_masks[idx].append(None)
 
             cls_scores_list.append(cls_scores)
             # update local memory & global memory
@@ -279,7 +285,7 @@ class IAICondInst(SingleStageDetector):
         num_classes = cls_scores_list.shape[-1]
 
         cls_scores_mean = torch.mean(cls_scores_list, dim=0).flatten(0)
-        cls_scores_topk, idx_topk = torch.topk(cls_scores_mean, 10)
+        cls_scores_topk, idx_topk = torch.topk(cls_scores_mean, self.max_per_img)
 
         score_thr = 0.05
         keep = cls_scores_topk > score_thr
