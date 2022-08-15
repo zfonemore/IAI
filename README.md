@@ -8,12 +8,12 @@ This repo is the official implementation of IAI paradigm for video instance segm
 
 ## Performance
 
-|  Dataset  |  Model Name  | Backbone | mAP  |        FPS        |
-| --------- | ------------ | -------- | ---- | ----------------- |
-| YTVIS2019 | IAI+CondInst |   R50    | 39.9 | 32 / 101 (4 GPUs) |
-| YTVIS2019 | IAI+CondInst |   R101   | 43.7 | 28 / 96 (4 GPUs)  |
-| YTVIS2021 | IAI+CondInst |   R50    | 38.0 | 30 / 109 (4 GPUs) |
-|    OVIS   | IAI+CondInst |   R50    | 20.6 | 14 / 50 (4 GPUs)  |
+|  Dataset  |  Model Name  | Backbone | mAP  | FPS | FPS (4GPUs) |
+| --------- | ------------ | -------- | ---- | --- | ----------- |
+| YTVIS2019 | IAI+CondInst |   R50    | 39.9 | 32  | 101 |
+| YTVIS2019 | IAI+CondInst |   R101   | 43.7 | 28  | 96  |
+| YTVIS2021 | IAI+CondInst |   R50    | 38.0 | 30  | 109 |
+|    OVIS   | IAI+CondInst |   R50    | 20.6 | 14  | 50  |
 
 ## Installation
 
