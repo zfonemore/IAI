@@ -8,7 +8,7 @@ This repo is the official implementation of IAI paradigm for video instance segm
 
 ## Visualization on YTVIS-2019 & OVIS dataset
 
-<img src='doc/visualization1.gif' width="200"> <img src='doc/visualization2.gif' width="200">
+<img src='doc/visualization1.gif' width="400"> <img src='doc/visualization2.gif' width="400">
 
 ## Performance
 
