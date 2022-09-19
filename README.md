@@ -6,7 +6,11 @@ This repo is the official implementation of IAI paradigm for video instance segm
 
 <img src='doc/IAI_framework.png'>
 
-<img src='doc/visualization.gif'>
+## Visualization on YTVIS-2019 & OVIS dataset
+
+<img src='doc/visualization1.gif'>
+
+<img src='doc/visualization2.gif'>
 
 ## Performance
 
