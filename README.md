@@ -6,6 +6,8 @@ This repo is the official implementation of IAI paradigm for video instance segm
 
 <img src='doc/IAI_framework.png'>
 
+<img src='doc/visualization.gif'>
+
 ## Performance
 
 |  Dataset  |  Model Name  | Backbone | mAP  | FPS | FPS (4GPUs) |
